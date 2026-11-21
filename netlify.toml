@@ -1,0 +1,13 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# Link de pagamento enviado ao cliente: /pagar/<código> abre a página pagar.html
+[[redirects]]
+  from = "/pagar/*"
+  to = "/pagar.html"
+  status = 200
+
+# Rotina automática: padroniza o nome do cliente por CPF a cada 10 minutos (funções agendadas só rodam no deploy publicado)
+[functions."padronizar-nomes"]
+  schedule = "*/10 * * * *"

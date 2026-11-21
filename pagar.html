@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Pagamento via Pix</title>
+<script src="/tema.js"></script>
+<link rel="stylesheet" href="/tema.css">
+<style>
+  :root { --navy:#12284c; --navy2:#1c3a6b; --orange:#ff7a00; --bg:#f2f4f8; --ok:#1b8a3a; --err:#c62828; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:#1d2433; }
+  header { background:var(--navy); color:#fff; padding:14px 20px; border-bottom:4px solid var(--orange); font-weight:700; }
+  main { max-width:460px; margin:24px auto; padding:0 14px; }
+  .card { background:#fff; border-radius:14px; padding:24px; box-shadow:0 2px 12px rgba(18,40,76,.08); }
+  h1 { font-size:18px; margin:0 0 4px; color:var(--navy); }
+  .sub { color:#6b7585; font-size:13px; }
+  .amount { font-size:32px; font-weight:800; color:var(--navy); margin:10px 0 2px; }
+  label { display:block; margin:14px 0 4px; font-weight:600; font-size:13px; color:var(--navy); }
+  input { width:100%; padding:12px; border:1px solid #cfd6e2; border-radius:8px; font-size:16px; }
+  input:focus { outline:2px solid var(--orange); border-color:transparent; }
+  button.primary { width:100%; margin-top:18px; padding:14px; border:0; border-radius:8px; background:var(--orange); color:#fff; font-size:16px; font-weight:700; cursor:pointer; }
+  button.primary:disabled { opacity:.6; cursor:default; }
+  .regras { margin-top:16px; padding:10px 12px; background:#fff7ef; border:1px solid var(--orange); border-radius:8px; font-size:12px; color:var(--navy); }
+  .regras ol { margin:6px 0 0; padding-left:18px; }
+  .msg { display:none; margin-top:12px; padding:10px; border-radius:8px; font-size:14px; background:#fdecea; color:var(--err); }
+  .msg.err { display:block; }
+  .center { text-align:center; }
+  .qr { width:240px; height:240px; image-rendering:pixelated; border:1px solid #e1e6ee; border-radius:8px; padding:8px; background:#fff; margin:12px auto; display:block; }
+  textarea { width:100%; height:90px; font-size:12px; padding:8px; border:1px solid #cfd6e2; border-radius:8px; resize:none; }
+  .badge { display:inline-block; padding:6px 16px; border-radius:20px; font-weight:700; font-size:14px; margin:10px 0; }
+  .badge.pend { background:#fff3e0; color:#b85c00; }
+  .badge.ok { background:#e6f4ea; color:var(--ok); }
+  .badge.bad { background:#fdecea; color:var(--err); }
+  .hidden { display:none !important; }
+  .pelicula { position:fixed; inset:0; z-index:2000; background:rgba(255,255,255,.6); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; cursor:wait; font-weight:600; color:var(--navy); }
+  .pelicula.hidden { display:none !important; }
+  .spinner { width:46px; height:46px; border:5px solid rgba(18,40,76,.2); border-top-color:var(--orange); border-radius:50%; animation:gira .8s linear infinite; }
+  @keyframes gira { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="pelicula hidden" id="pelicula" role="status" aria-live="polite"><div class="spinner"></div><div>Carregando…</div></div>
+<header style="display:flex;align-items:center;gap:10px">Pagamento via Pix <select class="seletor-tema" id="temaSel" title="Tema" aria-label="Tema" style="margin-left:auto"><option value="sistema">Tema: sistema</option><option value="claro">Claro</option><option value="escuro">Escuro</option></select></header>
+<main>
+  <section class="card" id="carregando"><div class="sub center">Carregando…</div></section>
+
+  <section class="card hidden" id="erro"><h1 id="erroTitulo">Link indisponível</h1><div class="sub" id="erroTexto"></div></section>
+
+  <section class="card hidden" id="dados">
+    <h1 id="desc"></h1>
+    <div class="amount" id="valor"></div>
+    <div class="sub">Preencha seus dados para gerar o Pix.</div>
+    <form id="form" autocomplete="off">
+      <label>Nome completo</label>
+      <input id="nome" maxlength="100" autocomplete="name" required>
+      <label>CPF</label>
+      <input id="cpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" required>
+      <div class="regras">
+        <strong>Observações importantes</strong>
+        <ol>
+          <li>O QR Code é gerado para o CPF informado. O PIX deve ser feito por uma conta do mesmo CPF.</li>
+          <li>Este Pix é emitido para pessoa física (CPF). Para pagar com conta CNPJ, fale com o financeiro ou use outra forma de pagamento, como o PayPal.</li>
+          <li>O PIX não poderá ser devolvido por esse sistema. Caso precise de devolução, entre em contato com o financeiro e informe uma chave PIX do mesmo titular para receber o valor por outra conta.</li>
+        </ol>
+      </div>
+      <button class="primary" id="btn" type="submit">Gerar Pix</button>
+      <div class="msg" id="msg"></div>
+    </form>
+  </section>
+
+  <section class="card hidden center" id="pix">
+    <h1 id="pixDesc"></h1>
+    <div class="amount" id="pixValor"></div>
+    <div><span class="badge pend" id="badge">Aguardando pagamento</span></div>
+    <img class="qr" id="qrimg" alt="QR Code Pix">
+    <textarea id="code" readonly></textarea>
+    <button class="primary" id="copiar" type="button">Copiar Pix copia e cola</button>
+    <div class="sub" style="margin-top:12px">Abra o app do seu banco, escolha pagar com Pix e leia o QR Code ou cole o código. Esta página atualiza sozinha quando o pagamento for confirmado.</div>
+  </section>
+</main>
+<script src="/vendor/qrcode.js"></script>
+<script>
+const ENDPOINT = "/.netlify/functions/plugpay";
+const $ = (id) => document.getElementById(id);
+const token = location.pathname.split("/").filter(Boolean).pop();
+const brl = (n) => "R$ " + Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+let poller = null;
+
+let carregandoN = 0, peliculaT = null;
+async function api(body, silencioso) {
+  if (!silencioso && ++carregandoN === 1) peliculaT = setTimeout(() => { $("pelicula").classList.remove("hidden"); }, 250);
+  try {
+    const r = await fetch(ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, token }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(d.error || "Erro " + r.status); e.http = r.status; throw e; }
+    return d;
+  } finally {
+    if (!silencioso && --carregandoN <= 0) { carregandoN = 0; clearTimeout(peliculaT); $("pelicula").classList.add("hidden"); }
+  }
+}
+function mostrar(id) { ["carregando", "erro", "dados", "pix"].forEach(x => $(x).classList.toggle("hidden", x !== id)); }
+function erro(titulo, texto) { $("erroTitulo").textContent = titulo; $("erroTexto").textContent = texto; mostrar("erro"); }
+
+function qrDoCodigo(codigo) {
+  try { const q = qrcode(0, "M"); q.addData(String(codigo)); q.make(); return q.createDataURL(6, 4); } catch (_) { return ""; }
+}
+function pintarStatus(st) {
+  const b = $("badge");
+  const mapa = { 1: ["Pagamento aprovado! Obrigado.", "ok"], 3: ["Pagamento rejeitado", "bad"], 6: ["Cobrança cancelada ou expirada", "bad"], 9: ["Pagamento estornado", "bad"] };
+  const m = mapa[st] || ["Aguardando pagamento", "pend"];
+  b.textContent = m[0]; b.className = "badge " + m[1];
+  if (st && st !== 5) { clearInterval(poller); if (st === 1) { $("copiar").classList.add("hidden"); $("qrimg").classList.add("hidden"); $("code").classList.add("hidden"); } }
+}
+function telaPix(d) {
+  $("pixDesc").textContent = d.descricao || "";
+  $("pixValor").textContent = brl(d.valorBRL);
+  $("code").value = d.qrCopiaCola || "";
+  $("qrimg").src = d.qrCopiaCola ? qrDoCodigo(d.qrCopiaCola) : "";
+  pintarStatus(d.status);
+  mostrar("pix");
+  clearInterval(poller);
+  if (!d.status || d.status === 5) poller = setInterval(async () => { try { pintarStatus((await api({ action: "link-info" }, true)).status); } catch (_) {} }, 5000);
+}
+function aplicar(d) {
+  if (d.estado === "gerada") return telaPix(d);
+  if (d.expirado) return erro("Link expirado", "Peça um novo link ao atendente.");
+  $("desc").textContent = d.descricao || "Pagamento";
+  $("valor").textContent = brl(d.valorBRL);
+  mostrar("dados");
+}
+
+$("cpf").addEventListener("input", e => {
+  let d = e.target.value.replace(/\D/g, "").slice(0, 11);
+  e.target.value = d.replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+});
+function validCPF(c) {
+  c = c.replace(/\D/g, "");
+  if (c.length !== 11 || /^(\d)\1+$/.test(c)) return false;
+  for (let t = 9; t < 11; t++) { let s = 0; for (let i = 0; i < t; i++) s += +c[i] * (t + 1 - i); if (((s * 10) % 11) % 10 !== +c[t]) return false; }
+  return true;
+}
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const m = $("msg"); m.className = "msg";
+  const nome = $("nome").value.trim();
+  if (nome.length < 3) { m.textContent = "Informe seu nome completo."; m.className = "msg err"; return; }
+  if (!validCPF($("cpf").value)) { m.textContent = "CPF inválido."; m.className = "msg err"; return; }
+  $("btn").disabled = true; $("btn").textContent = "Gerando…";
+  try { aplicar(await api({ action: "link-gerar", nome, cpf: $("cpf").value.replace(/\D/g, "") })); }
+  catch (err) { m.textContent = err.message; m.className = "msg err"; }
+  finally { $("btn").disabled = false; $("btn").textContent = "Gerar Pix"; }
+});
+$("copiar").onclick = async () => {
+  try { await navigator.clipboard.writeText($("code").value); } catch { $("code").select(); document.execCommand("copy"); }
+  $("copiar").textContent = "Copiado!"; setTimeout(() => { $("copiar").textContent = "Copiar Pix copia e cola"; }, 2000);
+};
+
+(async () => {
+  try { aplicar(await api({ action: "link-info" })); }
+  catch (err) { erro("Link indisponível", err.http === 404 ? "Este link não existe ou foi digitado incorretamente." : err.message); }
+})();
+</script>
+<script>ppTema.ligar(document.getElementById("temaSel"));</script>
+</body>
+</html>

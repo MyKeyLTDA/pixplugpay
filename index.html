@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cobrança Pix — PlugPay</title>
+<script src="/tema.js"></script>
+<link rel="stylesheet" href="/tema.css" media="all" id="temaCss">
+<style>
+  :root { --navy:#12284c; --navy2:#1c3a6b; --orange:#ff7a00; --bg:#f2f4f8; --ok:#1b8a3a; --err:#c62828; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:Segoe UI, system-ui, sans-serif; background:var(--bg); color:#1b2430; }
+  header { background:var(--navy); color:#fff; padding:14px 24px; display:flex; align-items:center; gap:12px; border-bottom:4px solid var(--orange); }
+  header h1 { font-size:18px; margin:0; font-weight:600; }
+  header .env { margin-left:auto; font-size:12px; opacity:.8; }
+  main { max-width:960px; margin:24px auto; padding:0 16px; display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  @media (max-width:780px){ main{ grid-template-columns:1fr; } }
+  .card { background:#fff; border-radius:10px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  .tabs { display:flex; gap:6px; margin-bottom:16px; }
+  .tab { flex:1; padding:9px; border:1px solid #cdd5e0; background:#fff; border-radius:6px; cursor:pointer; font-weight:600; color:var(--navy); }
+  .tab.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+  label { display:block; font-size:13px; font-weight:600; margin:12px 0 4px; color:var(--navy2); }
+  input, select { width:100%; padding:10px; border:1px solid #cdd5e0; border-radius:6px; font-size:15px; }
+  input:focus, select:focus { outline:2px solid var(--orange); border-color:transparent; }
+  .row { display:grid; grid-template-columns:110px 1fr; gap:10px; }
+  button.primary { width:100%; margin-top:18px; padding:12px; background:var(--orange); color:#fff; border:0; border-radius:6px; font-size:16px; font-weight:700; cursor:pointer; }
+  button.primary:disabled { opacity:.6; cursor:wait; }
+  .hint { font-size:12px; color:#6b7686; margin-top:4px; }
+  .msg { margin-top:12px; padding:10px; border-radius:6px; font-size:14px; display:none; }
+  .msg.err { display:block; background:#fdecea; color:var(--err); }
+  .result { text-align:center; }
+  .placeholder { color:#8a94a3; padding:60px 10px; }
+  .qr { width:240px; height:240px; image-rendering:pixelated; border:1px solid #e1e6ee; border-radius:8px; padding:8px; background:#fff; }
+  .badge { display:inline-block; padding:5px 14px; border-radius:20px; font-weight:700; font-size:13px; margin:10px 0; }
+  .badge.pend { background:#fff3e0; color:#b85c00; }
+  .badge.ok { background:#e6f4ea; color:var(--ok); }
+  .badge.bad { background:#fdecea; color:var(--err); }
+  .amount { font-size:22px; font-weight:700; color:var(--navy); }
+  .sub { font-size:13px; color:#6b7686; }
+  textarea { width:100%; height:92px; margin-top:10px; padding:8px; font-family:Consolas, monospace; font-size:12px; border:1px solid #cdd5e0; border-radius:6px; resize:none; }
+  button.copy { width:100%; margin-top:8px; padding:10px; background:var(--navy); color:#fff; border:0; border-radius:6px; font-weight:600; cursor:pointer; }
+  button.copy.done { background:var(--ok); }
+  .logs { grid-column:1 / -1; }
+  .logs summary { cursor:pointer; font-weight:700; color:var(--navy); }
+  .logs table { width:100%; border-collapse:collapse; font-size:12px; margin-top:10px; }
+  .logs th, .logs td { text-align:left; padding:6px 8px; border-bottom:1px solid #e8ecf2; vertical-align:top; }
+  .logs tr.row { cursor:pointer; }
+  .logs tr.row:hover { background:#f6f8fb; }
+  .logs .st-ok { color:var(--ok); font-weight:700; }
+  .logs .st-bad { color:var(--err); font-weight:700; }
+  .logs pre { white-space:pre-wrap; word-break:break-all; background:#f6f8fb; padding:8px; border-radius:6px; margin:0; font-size:11px; }
+  .logs .tools { display:flex; gap:10px; align-items:center; margin-top:10px; }
+  button.link { background:none; border:0; color:var(--navy2); text-decoration:underline; cursor:pointer; font-size:12px; margin-top:10px; }
+  .regras { margin-top:14px; padding:10px 12px; background:#fff7ef; border:1px solid var(--orange, #ee8030); border-radius:8px; font-size:12px; color:var(--navy); }
+  .regras ol { margin:6px 0 0; padding-left:18px; }
+  #login { max-width:380px; margin:48px auto; }
+  #login h2 { margin:0 0 4px; color:var(--navy); font-size:18px; }
+  .quem { display:flex; gap:16px; flex-wrap:wrap; }
+  .quem label { display:flex; gap:6px; align-items:center; font-weight:400; margin:4px 0; }
+  .quem input { width:auto; }
+  dialog { border:0; border-radius:12px; padding:22px; width:min(420px,92vw); box-shadow:0 10px 40px rgba(0,0,0,.25); }
+  dialog::backdrop { background:rgba(18,40,76,.45); }
+  .hidden { display:none !important; }
+  header .user { margin-left:auto; display:flex; gap:10px; align-items:center; font-size:12px; }
+  header .user button { background:none; border:1px solid currentColor; color:inherit; border-radius:6px; padding:3px 10px; cursor:pointer; font-size:12px; }
+  td.cp { white-space:nowrap; }
+  td.cp button.mini { background:none; border:0; cursor:pointer; padding:0 0 0 4px; font-size:12px; color:var(--navy2); }
+
+  /* ---- Visual mais confortável: letra maior, mais espaço ---- */
+  html { font-size:17px; }
+  body { line-height:1.45; }
+  header { padding:20px 36px; }
+  header h1 { font-size:24px; letter-spacing:.2px; }
+  header .user, header .env { font-size:14px; }
+  main { max-width:1400px; margin:30px auto; padding:0 28px; gap:26px; }
+  .card { padding:30px; border-radius:16px; box-shadow:0 2px 14px rgba(18,40,76,.08); }
+  .tab { padding:12px; font-size:16px; border-radius:10px; }
+  label { font-size:14.5px; margin:16px 0 6px; }
+  input, select { padding:13px 14px; font-size:16.5px; border-radius:10px; }
+  button.primary { padding:16px; font-size:18px; border-radius:10px; box-shadow:0 3px 10px rgba(255,122,0,.3); }
+  button.primary:hover:not(:disabled) { filter:brightness(1.05); }
+  .hint, .sub { font-size:14px; }
+  .regras { font-size:14px; padding:14px 16px; border-radius:12px; }
+  .amount { font-size:30px; }
+  .badge { font-size:14.5px; padding:6px 16px; }
+  textarea { font-size:13.5px; }
+  button.copy { padding:13px; font-size:16px; border-radius:10px; }
+  .logs summary { font-size:20px; padding:2px 0; }
+  .logs .tools { gap:14px; flex-wrap:wrap; margin-top:16px; }
+  .logs .tools select, .logs .tools input { padding:11px 14px; font-size:15.5px; width:auto; }
+  button.link { font-size:15px; margin-top:0; padding:8px 4px; }
+  .logs table { font-size:15px; margin-top:14px; border-collapse:separate; border-spacing:0; }
+  .logs th { font-size:12.5px; text-transform:uppercase; letter-spacing:.5px; color:#5b6678; background:#f3f6fa; padding:12px 12px; position:sticky; top:0; white-space:nowrap; }
+  .logs th:first-child { border-radius:10px 0 0 10px; } .logs th:last-child { border-radius:0 10px 10px 0; }
+  .logs td { padding:14px 12px; border-bottom:1px solid #edf0f5; vertical-align:middle; }
+  #txBody tr:hover { background:#f6f9fd; }
+  #txBody .badge { font-size:13.5px; padding:5px 14px; white-space:nowrap; }
+  td.cp { white-space:nowrap; }
+  td.cp.nome { white-space:normal; min-width:150px; }
+  td.cp button.mini, td.cp button.edit { background:none; border:0; cursor:pointer; padding:2px 4px; font-size:15px; color:#8a97ab; border-radius:6px; }
+  td.cp button.mini:hover, td.cp button.edit:hover { background:#eaf0f8; color:var(--navy2); }
+  td.cp.obs { white-space:normal; min-width:170px; max-width:260px; }
+  td.cp .vazio { color:#b3bccb; }
+  td.cp .edita { display:flex; flex-wrap:wrap; align-items:center; gap:4px; min-width:150px; }
+  td.cp .edita input.inline { flex:1 1 110px; width:auto; min-width:110px; padding:8px 10px; font-size:15px; border-radius:8px; }
+  td.cp .inline-btns { display:inline-flex; gap:2px; flex:none; }
+  td.cp .edita .erro-inline { flex-basis:100%; }
+  td.valor { white-space:nowrap; font-weight:600; }
+  .acoes button { white-space:nowrap; }
+  .acoes { display:flex; flex-direction:column; gap:2px; align-items:flex-start; }
+  .data-hora { white-space:nowrap; color:#4a5568; }
+
+  /* Película de carregamento */
+  .pelicula { position:fixed; inset:0; z-index:2000; background:rgba(255,255,255,.6); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; cursor:wait; font-weight:600; color:var(--navy); backdrop-filter:blur(1px); }
+  .pelicula.hidden { display:none; }
+  .spinner { width:46px; height:46px; border:5px solid rgba(18,40,76,.2); border-top-color:var(--orange); border-radius:50%; animation:gira .8s linear infinite; }
+  @keyframes gira { to { transform:rotate(360deg); } }
+  .erro-inline { color:var(--err); font-size:11px; display:block; margin-top:2px; white-space:normal; }
+  .periodo { display:flex; gap:6px; align-items:center; font-size:12px; color:#6b7686; }
+  .periodo input { width:auto; padding:7px 8px; }
+</style>
+
+</head>
+<body>
+<div class="pelicula hidden" id="pelicula" role="status" aria-live="polite"><div class="spinner"></div><div>Carregando…</div></div>
+<header>
+  <h1>Cobrança Pix — PlugPay</h1>
+  <span class="env" id="envLabel"></span>
+  <select class="seletor-tema" id="temaSel" title="Tema" aria-label="Tema"><option value="sistema">Tema: sistema</option><option value="claro">Claro</option><option value="escuro">Escuro</option></select>
+  <span class="user hidden" id="userBox"><span id="userEmail"></span><button type="button" id="btnSair">Sair</button></span>
+</header>
+
+<section class="card" id="login">
+  <h2>Entrar</h2>
+  <div class="sub">Use o e-mail e a senha que você recebeu.</div>
+  <form id="loginForm">
+    <label>E-mail</label>
+    <input id="loginEmail" type="email" autocomplete="username" required>
+    <label>Senha</label>
+    <input id="loginSenha" type="password" autocomplete="current-password" required>
+    <button class="primary" id="loginBtn" type="submit">Entrar</button>
+    <div class="msg" id="loginMsg"></div>
+  </form>
+</section>
+
+<main id="app" class="hidden">
+  <section class="card">
+    <div class="tabs">
+      <button class="tab active" data-mode="pix">Pix (Brasil)</button>
+      <button class="tab" data-mode="qrpy">QR Paraguay</button>
+    </div>
+
+    <form id="form" autocomplete="off">
+      <div id="pixFields">
+        <label>Quem preenche o nome e o CPF?</label>
+        <div class="quem">
+          <label><input type="radio" name="quem" value="atendente" checked> Eu preencho agora</label>
+          <label><input type="radio" name="quem" value="cliente"> O cliente preenche (gerar link)</label>
+        </div>
+
+        <label>Valor a cobrar (R$)</label>
+        <input id="value" inputmode="decimal" placeholder="0,00">
+
+        <label>Converter para (moeda enviada à PlugPay)</label>
+        <select id="currency">
+          <option value="PYG">PYG — guaranis (mais preciso)</option>
+          <option value="USD">USD — dólares</option>
+        </select>
+        <div class="hint">O cliente paga o Pix em reais, no valor acima. A conversão é feita pela cotação da PlugPay.</div>
+
+        <div id="dadosCliente">
+          <label>Nome do cliente</label>
+          <input id="nomeCliente" maxlength="100" autocomplete="off" placeholder="Nome completo">
+
+          <label>CPF do cliente</label>
+          <input id="cpf" inputmode="numeric" placeholder="000.000.000-00" maxlength="14">
+        </div>
+
+        <div id="descField" style="display:none">
+          <label>Descrição (o cliente vai ver)</label>
+          <input id="descLink" maxlength="200" value="MyKey Soluções" placeholder="Ex.: Senha Kia — chassi final 1234">
+          <div class="hint">O cliente abre o link, preenche nome e CPF e recebe o Pix. O link vale por 24 h e gera um único Pix.</div>
+        </div>
+      </div>
+
+      <div id="qrpyFields" style="display:none">
+        <label>Valor em guaranis (PYG)</label>
+        <input id="valuePyg" inputmode="numeric" placeholder="Ex.: 50000">
+        <div class="hint">Somente números inteiros.</div>
+      </div>
+
+      <div id="refField">
+        <label>Nº do pedido (opcional — pode anexar depois)</label>
+        <input id="refExterna" inputmode="numeric" maxlength="20" placeholder="Ex.: 12345">
+      </div>
+
+      <div class="regras" id="regrasBox">
+        <strong>Observações importantes</strong>
+        <ol>
+          <li>O QR Code é gerado para o CPF informado. O PIX deve ser feito por uma conta do mesmo CPF.</li>
+          <li>Este Pix é emitido para pessoa física (CPF). Para pagar com conta CNPJ, fale com o financeiro ou use outra forma de pagamento, como o PayPal.</li>
+          <li>O PIX não poderá ser devolvido por esse sistema. Caso precise de devolução, entre em contato com o financeiro e informe uma chave PIX do mesmo titular para receber o valor por outra conta.</li>
+        </ol>
+      </div>
+
+      <details style="margin-top:14px">
+        <summary class="sub" style="cursor:pointer">Avançado (diagnóstico)</summary>
+        <label>Documento do merchant (sobrescreve o do Netlify)</label>
+        <input id="docMerchant" placeholder="Deixe vazio para usar o padrão">
+        <label style="display:flex;gap:8px;align-items:center;font-weight:400">
+          <input type="checkbox" id="cpfFmt" style="width:auto"> Enviar CPF formatado (000.000.000-00)
+        </label>
+      </details>
+
+      <button class="primary" id="btn" type="submit">Gerar Pix</button>
+      <div class="msg" id="msg"></div>
+    </form>
+  </section>
+
+  <section class="card result" id="result">
+    <div class="placeholder">O QR Code e o copia e cola aparecem aqui.</div>
+  </section>
+  <section class="card logs">
+    <details id="txBox" open>
+      <summary>Transações</summary>
+      <div class="tools">
+        <select id="txStatus" style="width:auto">
+          <option value="">Todos os status</option>
+          <option value="5">Pendentes</option>
+          <option value="1">Aprovadas</option>
+          <option value="3">Rejeitadas</option>
+          <option value="6">Canceladas</option>
+          <option value="9">Estornadas</option>
+        </select>
+        <select id="txUsuario" style="width:auto"><option value="">Todos os usuários</option></select>
+        <select id="txNF" style="width:auto">
+          <option value="">Notas fiscais: todas</option>
+          <option value="vazias">Sem nota fiscal</option>
+          <option value="preenchidas">Com nota fiscal</option>
+        </select>
+        <span class="periodo"><label for="txDe" style="margin:0;font-weight:400">De</label><input type="date" id="txDe"><label for="txAte" style="margin:0;font-weight:400">até</label><input type="date" id="txAte"><button type="button" class="link" id="txLimparDatas" style="margin:0">limpar</button></span>
+        <select id="txPlug" style="width:auto">
+          <option value="">Pago pela Plug: todos</option>
+          <option value="sem_data">Sem data (não repassado)</option>
+          <option value="com_data">Com data</option>
+        </select>
+        <input id="txBusca" placeholder="Buscar nome, CPF, pedido ou nota fiscal" style="width:370px;max-width:100%">
+        <button type="button" class="link" id="txRefresh">Atualizar</button>
+        <button type="button" class="link" id="txVerificar">Verificar pendentes</button>
+        <button type="button" class="link" id="txCsv">CSV</button>
+        <button type="button" class="link" id="txXls">Excel</button>
+        <button type="button" class="link" id="txPdf">PDF</button>
+      </div>
+      <div class="sub" id="txInfo" style="margin-top:8px"></div>
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Data</th><th>Nº pedido</th><th>Nota fiscal</th><th>Cliente</th><th>CPF</th><th>Observações</th><th>Emitido por</th><th>Valor</th><th>Status</th><th>Pago pela Plug</th><th></th></tr></thead>
+        <tbody id="txBody"></tbody>
+      </table>
+      </div>
+    </details>
+  </section>
+
+  <section class="card logs" id="linksSec">
+    <details id="linksBox" open>
+      <summary>Links de pagamento enviados</summary>
+      <div class="sub" id="linkInfo" style="margin-top:8px"></div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Criado</th><th>Descrição</th><th>Valor R$</th><th>Criado por</th><th>Situação</th><th></th></tr></thead>
+        <tbody id="linkBody"></tbody>
+      </table></div>
+    </details>
+  </section>
+
+
+  <section class="card logs" id="logsSec">
+    <details id="logsBox">
+      <summary>Registro de chamadas (logs)</summary>
+      <div class="tools">
+        <button type="button" class="link" id="logsRefresh">Atualizar</button>
+        <span class="sub" id="logsInfo"></span>
+      </div>
+      <table>
+        <thead><tr><th>Hora</th><th>Ação</th><th>Rota</th><th>HTTP</th><th>ms</th><th>Mensagem</th><th>Código</th></tr></thead>
+        <tbody id="logsBody"></tbody>
+      </table>
+    </details>
+  </section>
+</main>
+
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/xlsx.mini.min.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/jspdf.plugin.autotable.min.js"></script>
+<script>
+const ENDPOINT = "/.netlify/functions/plugpay";
+const STATUS = {
+  5: { t: "Aguardando pagamento", c: "pend" },
+  1: { t: "Pagamento aprovado",   c: "ok"   },
+  3: { t: "Rejeitado",            c: "bad"  },
+  6: { t: "Cancelado / expirado", c: "bad"  },
+  9: { t: "Estornado",            c: "bad"  }
+};
+
+let mode = "pix", poller = null;
+const $ = (id) => document.getElementById(id);
+
+
+document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
+  mode = b.dataset.mode;
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === b));
+  $("pixFields").style.display  = mode === "pix"  ? "" : "none";
+  $("qrpyFields").style.display = mode === "qrpy" ? "" : "none";
+  atualizarModo();
+});
+
+// Pix: o atendente preenche nome/CPF agora, ou gera um link para o cliente preencher
+const porLink = () => mode === "pix" && document.querySelector('input[name="quem"]:checked').value === "cliente";
+function atualizarModo() {
+  const l = porLink();
+  $("dadosCliente").style.display = l ? "none" : "";
+  $("descField").style.display = l ? "" : "none";
+  $("refField").style.display = l ? "none" : "";
+  $("regrasBox").style.display = l ? "none" : "";
+  $("btn").textContent = l ? "Gerar link" : "Gerar Pix";
+}
+document.querySelectorAll('input[name="quem"]').forEach(r => r.addEventListener("change", atualizarModo));
+
+$("cpf").addEventListener("input", e => {
+  let d = e.target.value.replace(/\D/g, "").slice(0, 11);
+  d = d.replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+  e.target.value = d;
+});
+
+function validCPF(c) {
+  c = c.replace(/\D/g, "");
+  if (c.length !== 11 || /^(\d)\1+$/.test(c)) return false;
+  for (let t = 9; t < 11; t++) {
+    let s = 0;
+    for (let i = 0; i < t; i++) s += +c[i] * (t + 1 - i);
+    if (((s * 10) % 11) % 10 !== +c[t]) return false;
+  }
+  return true;
+}
+
+// ---- Login (Supabase Auth, chave pública) ----
+let cfg = null, sessao = null;
+const SKEY = "pp_sessao";
+function salvarSessao(x) {
+  sessao = x ? { access_token: x.access_token, refresh_token: x.refresh_token, email: (x.user && x.user.email) || (sessao && sessao.email) } : null;
+  try { sessao ? localStorage.setItem(SKEY, JSON.stringify(sessao)) : localStorage.removeItem(SKEY); } catch (_) {}
+}
+async function authFetch(grant, body) {
+  const r = await fetch(cfg.supabaseUrl + "/auth/v1/token?grant_type=" + grant, {
+    method: "POST", headers: { "Content-Type": "application/json", apikey: cfg.supabaseKey }, body: JSON.stringify(body)
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error_description || d.msg || d.message || ("Erro " + r.status));
+  return d;
+}
+async function renovar() {
+  if (!sessao || !sessao.refresh_token) return false;
+  try { salvarSessao(await authFetch("refresh_token", { refresh_token: sessao.refresh_token })); return true; }
+  catch (_) { return false; }
+}
+function mostrarApp(on) {
+  $("login").classList.toggle("hidden", on);
+  $("app").classList.toggle("hidden", !on);
+  $("userBox").classList.toggle("hidden", !on);
+  if (on) {
+    $("userEmail").textContent = sessao.email || "";
+    carregarUsuarios();
+    carregarTransacoes();
+    carregarLinks();
+  }
+}
+function sair() {
+  clearInterval(poller); salvarSessao(null); $("result").innerHTML = '<div class="placeholder">O QR Code e o copia e cola aparecem aqui.</div>';
+  mostrarApp(false);
+}
+async function carregarConfig() {
+  const r = await fetch(ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "config" }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || ("Erro " + r.status));
+  cfg = d;
+}
+$("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const m = $("loginMsg"); m.className = "msg"; $("loginBtn").disabled = true; peliculaMais();
+  try {
+    if (!cfg) await carregarConfig();
+    salvarSessao(await authFetch("password", { email: $("loginEmail").value.trim(), password: $("loginSenha").value }));
+    $("loginSenha").value = "";
+    mostrarApp(true);
+  } catch (err) {
+    m.textContent = /invalid login/i.test(err.message) ? "E-mail ou senha incorretos." : err.message;
+    m.className = "msg err";
+  } finally { $("loginBtn").disabled = false; peliculaMenos(); }
+});
+$("btnSair").onclick = sair;
+(async () => {
+  try {
+    await carregarConfig();
+    try { sessao = JSON.parse(localStorage.getItem(SKEY) || "null"); } catch (_) { sessao = null; }
+    if (sessao && (await renovar())) mostrarApp(true);
+  } catch (err) { $("loginMsg").textContent = err.message; $("loginMsg").className = "msg err"; }
+})();
+
+// Película de carregamento: aparece se a espera passar de 250 ms (sem piscar em respostas rápidas)
+let carregandoN = 0, peliculaT = null;
+function peliculaMais() {
+  if (++carregandoN === 1) peliculaT = setTimeout(() => { $("pelicula").classList.remove("hidden"); }, 250);
+}
+function peliculaMenos() {
+  if (--carregandoN <= 0) { carregandoN = 0; clearTimeout(peliculaT); $("pelicula").classList.add("hidden"); }
+}
+async function api(body, tentouRenovar, silencioso) {
+  if (!sessao) throw new Error("Sessão expirada. Entre novamente.");
+  if (!silencioso) peliculaMais();
+  try { return await apiEnvio(body, tentouRenovar, silencioso); }
+  finally { if (!silencioso) peliculaMenos(); }
+}
+async function apiEnvio(body, tentouRenovar, silencioso) {
+  const r = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessao.access_token },
+    body: JSON.stringify(body)
+  });
+  if (r.status === 401 && !tentouRenovar) {
+    if (await renovar()) return apiEnvio(body, true, silencioso);
+    sair();
+    throw new Error("Sessão expirada. Entre novamente.");
+  }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const rid = r.headers.get("x-request-id");
+    throw new Error((data.error || data.message || ("Erro " + r.status)) +
+      (data._enviado ? " | enviado: " + JSON.stringify(data._enviado) : "") +
+      (rid ? " | log: " + rid : ""));
+  }
+  return data;
+}
+
+function showError(t) { const m = $("msg"); m.textContent = t; m.className = "msg err"; }
+function clearError() { $("msg").className = "msg"; }
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearError();
+  clearInterval(poller);
+
+  if (porLink()) return gerarLink();
+
+  let body;
+  if (mode === "pix") {
+    const value = parseFloat($("value").value.replace(",", "."));
+    if (!(value > 0)) return showError("Informe um valor válido.");
+    if (!validCPF($("cpf").value)) return showError("CPF inválido.");
+    const nome = $("nomeCliente").value.trim();
+    if (nome.length < 3) return showError("Informe o nome do cliente.");
+    body = { action: "create-pix", nomeCliente: nome, valorBRL: value, moedaEnvio: $("currency").value, customerCPF: $("cpf").value.replace(/\D/g, "") };
+  } else {
+    const value = parseInt($("valuePyg").value, 10);
+    if (!(value > 0)) return showError("Informe um valor inteiro em guaranis.");
+    body = { action: "create-qr-py", value };
+  }
+
+  body.referenciaExterna = $("refExterna").value.trim() || undefined;
+  body.documentMerchant = $("docMerchant").value.trim() || undefined;
+  body.cpfFormatado = $("cpfFmt").checked || undefined;
+  $("result").innerHTML = '<div class="placeholder">Gerando cobrança...</div>'; // não deixa o Pix anterior na tela
+  $("btn").disabled = true; $("btn").textContent = "Gerando...";
+  try {
+    const d = await api(body);
+    render(d);
+    if ($("txBox").open) carregarTransacoes();
+  } catch (err) {
+    showError(err.message);
+    $("result").innerHTML = '<div class="placeholder">O QR Code e o copia e cola aparecem aqui.</div>';
+  } finally {
+    $("btn").disabled = false; atualizarModo();
+  }
+});
+
+// Gera o link de pagamento e mostra no painel da direita, pronto para copiar e enviar
+// ---- Links de pagamento ----
+const urlDoLink = (token) => location.origin + "/pagar/" + token;
+
+async function carregarLinks() {
+  const corpo = $("linkBody");
+  if (!corpo) return;
+  try {
+    const d = await api({ action: "link-listar", limite: 30 });
+    const links = d.links || [];
+    $("linkInfo").textContent = links.length ? links.length + " link(s) recentes" : "Nenhum link gerado ainda.";
+    corpo.innerHTML = "";
+    for (const l of links) {
+      const tr = document.createElement("tr");
+      const cel = (t) => { const td = document.createElement("td"); td.textContent = t; tr.appendChild(td); return td; };
+      cel(new Date(l.criado_em).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }));
+      cel(l.descricao || "");
+      cel(Number(l.valor_brl).toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+      cel((l.criado_por || "").split("@")[0]);
+      let sit;
+      if (l.usado_em) {
+        const st = ST[l.status];
+        sit = "Pix gerado" + (l.nome_cliente ? " — " + l.nome_cliente : "") + (st ? " (" + st[0] + ")" : "");
+      } else if (new Date(l.expira_em) < new Date()) sit = "Expirado";
+      else sit = "Aguardando o cliente";
+      cel(sit);
+      const acao = document.createElement("td");
+      if (!l.usado_em && new Date(l.expira_em) > new Date()) {
+        const b = miniBtn("⧉", "Copiar link", async () => { await copiarTexto(urlDoLink(l.token)); b.textContent = "✓"; setTimeout(() => { b.textContent = "⧉"; }, 1500); });
+        acao.appendChild(b);
+      }
+      tr.appendChild(acao);
+      corpo.appendChild(tr);
+    }
+  } catch (e) { $("linkInfo").textContent = "Não foi possível carregar os links: " + e.message; }
+}
+
+async function gerarLink() {
+  const valor = parseFloat($("value").value.replace(",", "."));
+  if (!(valor > 0)) return showError("Informe um valor válido.");
+  const descricao = $("descLink").value.trim();
+  if (descricao.length < 3) return showError("Informe a descrição.");
+  $("btn").disabled = true; $("btn").textContent = "Gerando...";
+  try {
+    const d = await api({ action: "link-criar", valorBRL: valor, descricao, moedaEnvio: $("currency").value });
+    const url = urlDoLink(d.token);
+    const horas = Math.round((new Date(d.expira_em) - Date.now()) / 3600000);
+    $("result").innerHTML = `
+      <div class="amount">${brl(valor)}</div>
+      <div class="sub">${descricao.replace(/[<>&]/g, "")}</div>
+      <div><span class="badge pend">Link gerado — aguardando o cliente</span></div>
+      <textarea id="linkUrl" readonly></textarea>
+      <button class="copy" id="linkCopiar" type="button">Copiar link</button>
+      <div class="sub">Envie ao cliente. Ele preenche nome e CPF e recebe o Pix. Vale por ${horas} h e gera um único Pix. Acompanhe em "Links de pagamento" abaixo.</div>`;
+    $("linkUrl").value = url;
+    const copiar = async () => { await copiarTexto(url); $("linkCopiar").textContent = "Copiado!"; setTimeout(() => { $("linkCopiar").textContent = "Copiar link"; }, 2000); };
+    $("linkCopiar").onclick = copiar;
+    copiar();
+    $("value").value = ""; $("descLink").value = "MyKey Soluções";
+    carregarLinks();
+  } catch (err) { showError(err.message); }
+  finally { $("btn").disabled = false; atualizarModo(); }
+}
+
+// ---- Painel de transações ----
+const ST = { 5: ["Pendente", "pend"], 1: ["Aprovado", "ok"], 3: ["Rejeitado", "bad"], 6: ["Cancelado", "bad"], 9: ["Estornado", "bad"] };
+const brl = (n) => "R$ " + Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+
+const fmtCPF = (c) => String(c).replace(/\D/g, "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+async function copiarTexto(txt) {
+  try { await navigator.clipboard.writeText(txt); }
+  catch { const a = document.createElement("textarea"); a.value = txt; document.body.appendChild(a); a.select(); document.execCommand("copy"); a.remove(); }
+}
+const nomeCurto = (email) => { const n = String(email || "").split("@")[0]; return n ? n.charAt(0).toUpperCase() + n.slice(1) : "—"; };
+
+// Botão pequeno e discreto (copiar / editar)
+function miniBtn(txt, tip, fn, cls = "mini") {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = cls; b.title = tip; b.textContent = txt; b.onclick = fn;
+  return b;
+}
+// Célula com o valor e um botão que copia (só os dígitos no caso do CPF, para colar em qualquer lugar)
+function copiavel(td, valor, fmt, classe) {
+  td.className = "cp" + (classe ? " " + classe : "");
+  td.textContent = "";
+  if (!valor) { td.textContent = "—"; return; }
+  td.appendChild(document.createTextNode(fmt ? fmt(valor) : valor));
+  const b = miniBtn("⧉", "Copiar", async () => { await copiarTexto(String(valor)); b.textContent = "✓"; setTimeout(() => { b.textContent = "⧉"; }, 1500); });
+  td.appendChild(b);
+}
+
+// Célula editável direto na tabela: mostra o valor, ⧉ copia (se quiser) e ✎ abre o campo para editar
+//   cfg = { campo: coluna no banco, chave: nome enviado à função, copiar: bool, max, numerico, placeholder }
+// 'AAAA-MM-DD' -> 'DD/MM/AAAA' sem passar por fuso horário
+const fmtData = (v) => { const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + "/" + m[2] + "/" + m[1] : String(v); };
+function celulaEditavel(td, t, cfg) {
+  td.className = "cp" + (cfg.classe ? " " + cfg.classe : "");
+  const mostrar = () => {
+    td.textContent = "";
+    const v = t[cfg.campo];
+    if (v) td.appendChild(document.createTextNode(cfg.tipo === "date" ? fmtData(v) : v));
+    else { const e = document.createElement("span"); e.className = "vazio"; e.textContent = "—"; td.appendChild(e); }
+    if (v && cfg.copiar) {
+      const c = miniBtn("⧉", "Copiar", async () => { await copiarTexto(String(v)); c.textContent = "✓"; setTimeout(() => { c.textContent = "⧉"; }, 1500); });
+      td.appendChild(c);
+    }
+    td.appendChild(miniBtn("✎", "Editar", editar, "edit"));
+  };
+  const editar = () => {
+    td.textContent = "";
+    const inp = document.createElement("input");
+    inp.className = "inline"; inp.value = t[cfg.campo] || ""; inp.maxLength = cfg.max; inp.placeholder = cfg.placeholder || "";
+    if (cfg.numerico) inp.inputMode = "numeric";
+    if (cfg.tipo === "date") { inp.type = "date"; inp.removeAttribute("maxlength"); inp.max = "2100-12-31"; inp.min = "2020-01-01"; }
+    const erro = document.createElement("span"); erro.className = "erro-inline";
+    let ocupado = false, encerrado = false;
+    const falha = (msg, semFoco) => { inp.style.outline = "2px solid var(--err)"; erro.textContent = msg; if (!semFoco) inp.focus(); };
+    const salvar = async (aoSair) => {
+      if (ocupado || encerrado) return;
+      const novo = inp.value.trim();
+      if (cfg.numerico && novo && !/^\d+$/.test(novo)) return falha("Somente números (ex.: 12345).", aoSair === true);
+      if (cfg.obrigatorio && novo.length < (cfg.min || 1)) return falha(cfg.obrigatorioMsg || "Campo obrigatório.", aoSair === true);
+      if (novo === (t[cfg.campo] || "")) { encerrado = true; return mostrar(); }
+      ocupado = true; inp.disabled = true; erro.textContent = "";
+      try {
+        await api({ action: "editar", id: t.id, [cfg.chave]: novo });
+        t[cfg.campo] = novo || null; encerrado = true; mostrar();
+      } catch (e) { ocupado = false; inp.disabled = false; falha(e.message, aoSair === true); }
+    };
+    const cancelar = () => { encerrado = true; mostrar(); };
+    inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); salvar(); } if (e.key === "Escape") cancelar(); });
+    const caixa = document.createElement("div"); caixa.className = "edita"; td.appendChild(caixa);
+    caixa.appendChild(inp);
+    const bs = document.createElement("span"); bs.className = "inline-btns";
+    const ok = miniBtn("✓", "Salvar", () => salvar()), no = miniBtn("✕", "Cancelar", cancelar);
+    // os botões não tiram o foco do campo antes do clique (senão o "salvar ao sair" disparava antes do ✕)
+    [ok, no].forEach(b => b.addEventListener("mousedown", e => e.preventDefault()));
+    bs.appendChild(ok); bs.appendChild(no);
+    caixa.appendChild(bs); caixa.appendChild(erro);
+    // Ao sair do campo (clicar fora) com alteração, salva sozinho: quem digitou não perde o que escreveu
+    inp.addEventListener("blur", () => { if (!encerrado && !ocupado && inp.value.trim() !== (t[cfg.campo] || "")) salvar(true); else if (!encerrado && !ocupado) cancelar(); });
+    inp.focus(); inp.select();
+  };
+  mostrar();
+}
+
+const filtrosTransacoes = () => ({ status: $("txStatus").value, usuario: $("txUsuario").value, nf: $("txNF").value, plug: $("txPlug").value, busca: $("txBusca").value.trim(), de: $("txDe").value, ate: $("txAte").value });
+
+async function carregarUsuarios() {
+  try {
+    const d = await api({ action: "usuarios" });
+    const sel = $("txUsuario"), atual = sel.value;
+    sel.innerHTML = '<option value="">Todos os usuários</option>';
+    (d.usuarios || []).forEach(u => { const o = document.createElement("option"); o.value = u; o.textContent = nomeCurto(u); sel.appendChild(o); });
+    sel.value = atual;
+  } catch (_) { /* o filtro simplesmente fica só com "Todos" */ }
+}
+
+async function carregarTransacoes() {
+  const body = $("txBody"), info = $("txInfo");
+  info.textContent = "Carregando...";
+  try {
+    const d = await api({ action: "transacoes", ...filtrosTransacoes(), limite: 100 });
+    const lista = d.transacoes || [];
+    body.innerHTML = "";
+    lista.forEach(t => {
+      const tr = document.createElement("tr");
+      const cel = (txt) => { const td = document.createElement("td"); td.textContent = txt ?? ""; tr.appendChild(td); return td; };
+      cel(new Date(t.criado_em).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })).className = "data-hora";
+      celulaEditavel(cel(""), t, { campo: "referencia_externa", chave: "numeroPedido", copiar: true, max: 20, numerico: true, placeholder: "Nº do pedido" });
+      celulaEditavel(cel(""), t, { campo: "nota_fiscal", chave: "notaFiscal", copiar: true, max: 60, placeholder: "Nº da nota ou texto" });
+      const tdNome = cel("");
+      celulaEditavel(tdNome, t, { campo: "nome_cliente", chave: "nomeCliente", copiar: true, max: 100, min: 3, obrigatorio: true, obrigatorioMsg: "Informe o nome completo (mín. 3 letras).", placeholder: "Nome completo" });
+      if (t.nome_informado) tdNome.title = "Informado pelo cliente: " + t.nome_informado;
+      copiavel(cel(""), t.cpf_cliente, fmtCPF);
+      celulaEditavel(cel(""), t, { campo: "observacoes", chave: "observacoes", max: 200, placeholder: "Observação curta", classe: "obs" });
+      const tdU = cel(nomeCurto(t.criado_por)); tdU.title = t.criado_por || "";
+      if (t.descricao) { const d = document.createElement("div"); d.className = "sub"; d.textContent = t.descricao; tdU.appendChild(d); }
+      cel(t.valor_brl ? brl(t.valor_brl) : "—").className = "valor";
+      const tdSt = cel(""); const st = ST[t.status] || ["—", "pend"];
+      const b = document.createElement("span"); b.className = "badge " + st[1]; b.style.margin = "0"; b.textContent = st[0]; tdSt.appendChild(b);
+      celulaEditavel(cel(""), t, { campo: "data_pago_plug", chave: "dataPagoPlug", tipo: "date", classe: "plug", placeholder: "Data" });
+      const tdA = cel(""); const caixa = document.createElement("div"); caixa.className = "acoes"; tdA.appendChild(caixa);
+      const btn = (txt, fn) => { const x = document.createElement("button"); x.type = "button"; x.className = "link"; x.textContent = txt; x.onclick = fn; caixa.appendChild(x); };
+      btn("Abrir QR", () => abrirQR(t));
+      if (t.status === 5) btn("Verificar", () => verificar(t).then(carregarTransacoes));
+      body.appendChild(tr);
+    });
+    const aprov = lista.filter(t => t.status === 1);
+    const soma = aprov.reduce((a, t) => a + Number(t.valor_brl || 0), 0);
+    info.textContent = lista.length + " transações exibidas · " + aprov.length + " aprovadas somando " + brl(soma);
+  } catch (e) { info.textContent = e.message; }
+}
+
+// ---- Exportação (mesmos filtros da tela, até 1000 linhas) ----
+const csvCel = (v) => {
+  let x = v === null || v === undefined ? "" : String(v);
+  if (/^[=+\-@\t\r]/.test(x)) x = "'" + x; // evita fórmulas ao abrir no Excel
+  return '"' + x.replace(/"/g, '""') + '"';
+};
+const dt = (v) => v ? new Date(v).toLocaleString("pt-BR") : "";
+const nBRL = (v) => v === null || v === undefined || v === "" ? "" : Number(v);
+const CAB = ["Data", "Nº pedido", "Nota fiscal", "Cliente", "CPF", "Observações", "Descrição", "Emitido por", "Tipo", "Moeda enviada", "Valor enviado", "Valor R$", "Status", "ID transação", "Referência", "Cliente pagou em", "Pago pela Plug (data)", "Nome informado pelo cliente"];
+const linhaExport = (t) => [
+  dt(t.criado_em), t.referencia_externa || "", t.nota_fiscal || "", t.nome_cliente || "", t.cpf_cliente ? fmtCPF(t.cpf_cliente) : "",
+  t.observacoes || "", t.descricao || "", t.criado_por || "", t.metodo === "QR_PARAGUAY" ? "QR Paraguay" : "Pix", t.moeda || "", nBRL(t.valor), nBRL(t.valor_brl),
+  (ST[t.status] || ["—"])[0], String(t.id_transacao || ""), t.referencia || "", dt(t.pago_em), t.data_pago_plug ? fmtData(t.data_pago_plug) : "", t.nome_informado || ""
+];
+const hoje = () => new Date().toISOString().slice(0, 10);
+function baixar(blob, nome) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function exportar(formato) {
+  const info = $("txInfo"); info.textContent = "Gerando " + formato.toUpperCase() + "...";
+  try {
+    const d = await api({ action: "transacoes", ...filtrosTransacoes(), limite: 1000 });
+    const lista = d.transacoes || [];
+    const linhas = lista.map(linhaExport);
+    if (formato === "csv") {
+      const csv = "\ufeff" + [CAB, ...linhas.map(l => l.map((v, i) => i === 11 && v !== "" ? String(v).replace(".", ",") : v))]
+        .map(l => l.map(csvCel).join(";")).join("\r\n");
+      baixar(new Blob([csv], { type: "text/csv;charset=utf-8" }), "transacoes-" + hoje() + ".csv");
+    } else if (formato === "xlsx") {
+      const ws = XLSX.utils.aoa_to_sheet([CAB, ...linhas]);
+      ws["!cols"] = CAB.map((c, i) => ({ wch: [18, 12, 14, 26, 16, 30, 24, 26, 10, 8, 12, 12, 12, 12, 24, 18, 18, 26][i] }));
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Transações");
+      XLSX.writeFile(wb, "transacoes-" + hoje() + ".xlsx");
+    } else {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+      doc.setFontSize(14); doc.text("Transações — Pix PlugPay", 30, 32);
+      doc.setFontSize(9); doc.text("Gerado em " + new Date().toLocaleString("pt-BR") + " · " + lista.length + " registros", 30, 46);
+      const cols = [0, 1, 2, 3, 4, 5, 7, 11, 12, 16]; // colunas que cabem na folha
+      doc.autoTable({
+        startY: 56, head: [cols.map(i => CAB[i])],
+        body: linhas.map(l => cols.map(i => i === 11 && l[i] !== "" ? "R$ " + Number(l[i]).toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : l[i])),
+        styles: { fontSize: 7.5, cellPadding: 3 }, headStyles: { fillColor: [18, 40, 76] }, margin: { left: 30, right: 30 },
+      });
+      doc.save("transacoes-" + hoje() + ".pdf");
+    }
+    info.textContent = lista.length + " transações exportadas.";
+  } catch (e) { info.textContent = e.message; }
+}
+$("txCsv").onclick = () => exportar("csv");
+$("txXls").onclick = () => exportar("xlsx");
+$("txPdf").onclick = () => exportar("pdf");
+
+async function verificar(t) {
+  const pix = t.metodo !== "QR_PARAGUAY";
+  try {
+    await api(pix ? { action: "status-pix", referenciaInterna: t.referencia }
+                  : { action: "status-qr-py", serialNumber: t.serial_number || t.referencia });
+  } catch (_) { /* segue; o erro fica registrado nos logs */ }
+}
+
+async function abrirQR(t) {
+  clearInterval(poller);
+  try {
+    const q = await api({ action: "transacao-qr", id: t.id });
+    const url = /^https?:/i.test(q.qrImagem || "");
+    const m = q.metodo === "QR_PARAGUAY" ? "qrpy" : "pix";
+    if (q.status === 1) { // já pago: não reabre o código, para ninguém reenviar um QR que já foi quitado
+      $("result").innerHTML = '<div class="amount">' + brl(q.valor_brl) + '</div><div class="sub">Ref.: ' + (q.referencia || "-") +
+        '</div><div><span class="badge ok">Pagamento aprovado</span></div><div class="sub">Esta cobrança já foi paga. Gere um novo Pix se precisar cobrar de novo.</div>';
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    render({
+      qrCodeCopiaCola: q.qrCodeCopiaCola,
+      qrCodeStringImage: url ? undefined : q.qrImagem,
+      qrImageUrl: url ? q.qrImagem : undefined,
+      valueBRL: q.valor_brl, value: q.valor,
+      referenciaInterna: q.referencia, serialNumber: q.serial_number || q.referencia
+    }, m);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch (e) { $("txInfo").textContent = e.message; }
+}
+
+$("txRefresh").onclick = carregarTransacoes;
+$("txStatus").onchange = carregarTransacoes;
+$("txDe").onchange = $("txAte").onchange = carregarTransacoes;
+$("txLimparDatas").onclick = () => { $("txDe").value = ""; $("txAte").value = ""; carregarTransacoes(); };
+$("txUsuario").onchange = carregarTransacoes;
+$("txNF").onchange = carregarTransacoes;
+$("txPlug").onchange = carregarTransacoes;
+$("txBusca").addEventListener("keydown", e => { if (e.key === "Enter") carregarTransacoes(); });
+$("txVerificar").onclick = async () => {
+  $("txInfo").textContent = "Verificando pendentes...";
+  try {
+    const d = await api({ action: "transacoes", status: 5, limite: 20 });
+    for (const t of (d.transacoes || [])) await verificar(t);
+  } catch (_) {}
+  carregarTransacoes();
+};
+$("txBox").addEventListener("toggle", () => { if ($("txBox").open) carregarTransacoes(); });
+
+// ---- Painel de logs ----
+async function carregarLogs() {
+  const body = $("logsBody"), info = $("logsInfo");
+  info.textContent = "Carregando...";
+  try {
+    const d = await api({ action: "logs", limite: 40 });
+    body.innerHTML = "";
+    (d.logs || []).forEach(l => {
+      const tr = document.createElement("tr"); tr.className = "row";
+      const cel = (t, cls) => { const td = document.createElement("td"); td.textContent = t ?? ""; if (cls) td.className = cls; tr.appendChild(td); };
+      cel(new Date(l.criado_em).toLocaleString("pt-BR"));
+      cel(l.acao);
+      const tdR = cel((l.metodo || "") + " " + (l.endpoint || "")); tdR.title = l.rota || "";
+      cel(l.status_http, l.ok ? "st-ok" : "st-bad");
+      cel(l.duracao_ms);
+      cel(l.erro || (l.response && (l.response.message || l.response.error)) || "");
+      cel(l.request_id);
+      body.appendChild(tr);
+      const det = document.createElement("tr"); det.style.display = "none";
+      const td = document.createElement("td"); td.colSpan = 7;
+      const pre = document.createElement("pre");
+      pre.textContent = "ROTA:\n" + (l.rota || l.endpoint || "") + "\n\nENVIADO:\n" + JSON.stringify(l.request, null, 2) +
+        "\n\nRESPOSTA (tratada):\n" + JSON.stringify(l.response, null, 2) +
+        "\n\nRESPOSTA BRUTA:\n" + (l.resposta_bruta ?? "(não registrada)");
+      td.appendChild(pre); det.appendChild(td); body.appendChild(det);
+      tr.onclick = () => { det.style.display = det.style.display === "none" ? "" : "none"; };
+    });
+    info.textContent = (d.logs || []).length + " registros. Clique numa linha para ver o conteúdo.";
+  } catch (e) { info.textContent = e.message; }
+}
+$("logsRefresh").onclick = carregarLogs;
+$("logsBox").addEventListener("toggle", () => { if ($("logsBox").open) carregarLogs(); });
+
+// A PlugPay em produção não devolve a imagem do QR: geramos aqui a partir do "copia e cola"
+function qrDoCodigo(codigo) {
+  try {
+    const q = qrcode(0, "M");
+    q.addData(String(codigo));
+    q.make();
+    return q.createDataURL(6, 4);
+  } catch (_) { return ""; }
+}
+
+function imgSrc(d) {
+  if (d.qrCodeCopiaCola) { const g = qrDoCodigo(d.qrCodeCopiaCola); if (g) return g; }
+  if (d.qrCodeStringImage) {
+    return d.qrCodeStringImage.startsWith("data:") ? d.qrCodeStringImage : "data:image/png;base64," + d.qrCodeStringImage;
+  }
+  return d.qrImageUrl || "";
+}
+
+function render(d, m = mode) {
+  const isPix = m === "pix";
+  const code = d.qrCodeCopiaCola || "";
+  const ref = isPix ? d.referenciaInterna : d.serialNumber;
+  const amount = isPix
+    ? (d.valueBRL ? "R$ " + Number(d.valueBRL).toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "")
+    : "Gs. " + Number(d.value).toLocaleString("es-PY");
+
+  $("result").innerHTML = `
+    <div class="amount">${amount}</div>
+    <div class="sub">Ref.: ${ref || "-"}</div>
+    ${d.conversao && Math.abs(Number(d.valueBRL) - Number(d.conversao.alvoBRL)) > 0.05 ? `<div class="msg err" style="display:block;text-align:left">Atenção: a PlugPay gerou o Pix em R$ ${Number(d.valueBRL).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}, diferente dos R$ ${Number(d.conversao.alvoBRL).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} pedidos.</div>` : ""}
+    ${d.conversao ? `<div class="sub">Enviado à PlugPay: ${d.conversao.moeda} ${Number(d.conversao.value).toLocaleString("pt-BR")} (pedido R$ ${Number(d.conversao.alvoBRL).toLocaleString("pt-BR", { minimumFractionDigits: 2 })})</div>` : ""}
+    <div><span class="badge pend" id="badge">Aguardando pagamento</span></div>
+    ${imgSrc(d) ? `<img class="qr" id="qrimg" alt="QR Code Pix" src="${imgSrc(d)}">` : ""}
+    <textarea id="code" readonly></textarea>
+    <button class="copy" id="copyBtn">Copiar Pix copia e cola</button>
+    <div><button class="link" id="refresh">Verificar pagamento agora</button></div>`;
+  $("code").value = code;
+
+  $("copyBtn").onclick = async () => {
+    try { await navigator.clipboard.writeText(code); }
+    catch { $("code").select(); document.execCommand("copy"); }
+    $("copyBtn").textContent = "Copiado!"; $("copyBtn").classList.add("done");
+    setTimeout(() => { $("copyBtn").textContent = "Copiar Pix copia e cola"; $("copyBtn").classList.remove("done"); }, 2000);
+  };
+
+  const check = async () => {
+    try {
+      const s = await api(isPix
+        ? { action: "status-pix", referenciaInterna: ref }
+        : { action: "status-qr-py", serialNumber: ref }, false, true);
+      const code = Number(s.statusCodigo ?? s.status ?? s.transaction?.status ?? s.data?.status);
+      const st = STATUS[code];
+      if (st) {
+        $("badge").textContent = st.t;
+        $("badge").className = "badge " + st.c;
+        if (code !== 5) clearInterval(poller);
+      }
+    } catch (_) { /* tenta de novo no próximo ciclo */ }
+  };
+  $("refresh").onclick = check;
+  poller = setInterval(check, 5000);
+}
+</script>
+<script>ppTema.ligar(document.getElementById("temaSel"));</script>
+</body>
+</html>
