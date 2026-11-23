@@ -159,7 +159,12 @@ function telaTentando(d) {
 function aplicar(d) {
   if (d.estado !== "tentando") paraAcompanhamento();
   if (d.estado === "tentando") return telaTentando(d);
-  if (d.estado === "falhou") return mostrar("falhou");
+  if (d.estado === "falhou") {
+    // Mensagem pronta para o atendente achar esta cobrança (a referência não dá acesso a nada)
+    const ref = d.ref ? " Ref. #" + d.ref + "." : "";
+    $("chamarAtendimento").href = "https://wa.me/5535999018000?text=" + encodeURIComponent("Olá! Não consegui gerar o Pix no link de pagamento." + ref);
+    return mostrar("falhou");
+  }
   if (d.estado === "gerada") return telaPix(d);
   if (d.expirado) return erro("Link expirado", "Peça um novo link ao atendente.");
   $("desc").textContent = d.descricao || "Pagamento";

@@ -316,7 +316,7 @@ async function visaoDoLink(link) {
     // Tentativas feitas pelo servidor: a página só acompanha o estado (não precisa fazer nada para elas andarem)
     const j = await db.ultimaTentativaDoLink(link.token).catch(() => null);
     if (j && (j.estado === "aguardando" || j.estado === "gerando")) return { ...base, ...viewTentando(j) };
-    if (j && j.estado === "falhou" && !link.usado_em) return { ...base, estado: "falhou", de: TENTATIVAS_MAX };
+    if (j && j.estado === "falhou" && !link.usado_em) return { ...base, estado: "falhou", de: TENTATIVAS_MAX, ref: j.id };
     if (j && j.estado === "ok" && j.id_transacao) idTransacao = j.id_transacao;
   }
   if (!idTransacao) return { ...base, estado: "aguardando" };
@@ -369,7 +369,7 @@ async function tratarLinkPublico(req, merchant) {
   const r = await finalizarTentativa(job, 1, await tentarGerar(job, merchant));
   if (r.tipo === "ok") return json(200, { ...base_vazio(), estado: "gerada", status: 5, qrCopiaCola: r.resultado.qrCodeCopiaCola || null, valorBRL: Number(r.resultado.valueBRL) || Number(link.valor_brl), descricao: link.descricao });
   if (r.tipo === "tentando") return json(200, { ...base_vazio(), descricao: link.descricao, valorBRL: Number(link.valor_brl), ...viewTentando(r.job) });
-  if (r.tipo === "falhou") return json(200, { ...base_vazio(), descricao: link.descricao, valorBRL: Number(link.valor_brl), estado: "falhou", de: TENTATIVAS_MAX });
+  if (r.tipo === "falhou") return json(200, { ...base_vazio(), descricao: link.descricao, valorBRL: Number(link.valor_brl), estado: "falhou", de: TENTATIVAS_MAX, ref: job.id });
   return r.fatal.pronta || json(502, { error: LINK_ERRO_GENERICO });
 }
 
@@ -603,7 +603,7 @@ async function tratar(event) {
       const falhas = await db.falhasDeLinks(livres).catch(() => []);
       for (const l of links) { // a 1ª da lista é a mais recente
         const f = falhas.find((x) => x.link_token === l.token);
-        if (f && !l.usado_em && !l.id_transacao) l.falha = { erro: f.ultimo_erro || "erro sem detalhe", em: f.atualizado_em };
+        if (f && !l.usado_em && !l.id_transacao) l.falha = { ref: f.id, erro: f.ultimo_erro || "erro sem detalhe", em: f.atualizado_em };
       }
       return json(200, { links });
     }

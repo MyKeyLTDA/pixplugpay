@@ -541,8 +541,17 @@ async function carregarLinks() {
       else sit = "Aguardando o cliente";
       const tdSit = cel(sit);
       if (l.falha && !l.id_transacao) { // 3 tentativas sem sucesso: o atendente vê o motivo e quando
-        tdSit.textContent = "⚠ Falhou após 3 tentativas (" + new Date(l.falha.em).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) + "): " + l.falha.erro;
+        tdSit.textContent = "⚠ Tem um problema nesta cobrança. ";
         tdSit.style.color = "#b45309";
+        const ver = document.createElement("a");
+        ver.href = "#"; ver.textContent = "Clique aqui para ver";
+        ver.onclick = (ev) => {
+          ev.preventDefault();
+          alert("Não foi possível gerar o Pix depois de 3 tentativas" + (l.falha.ref ? " (ref. #" + l.falha.ref + ")" : "") + ", em " +
+            new Date(l.falha.em).toLocaleString("pt-BR") + ".\n\nMotivo informado pela PlugPay:\n" + l.falha.erro +
+            "\n\nO cliente foi orientado a falar com o atendimento. Peça que tente de novo; se o erro continuar, chame o administrador do sistema.");
+        };
+        tdSit.appendChild(ver);
       }
       const acao = document.createElement("td");
       if (!l.usado_em && new Date(l.expira_em) > new Date()) {

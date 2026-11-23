@@ -176,7 +176,7 @@ const ultimaTentativaDoLink = (token) =>
   req("plugpay_tentativas?select=*&link_token=eq." + encodeURIComponent(token) + amb() + "&order=criado_em.desc&limit=1", { method: "GET" }).then((r) => r[0] || null);
 // Últimas falhas definitivas (3 tentativas sem sucesso) dos links informados, para o atendente ver o motivo
 const falhasDeLinks = (tokens) => !tokens.length ? Promise.resolve([]) :
-  req("plugpay_tentativas?select=link_token,ultimo_erro,atualizado_em&estado=eq.falhou&link_token=in.(" + tokens.map(encodeURIComponent).join(",") + ")" + amb() + "&order=atualizado_em.desc", { method: "GET" });
+  req("plugpay_tentativas?select=id,link_token,ultimo_erro,atualizado_em&estado=eq.falhou&link_token=in.(" + tokens.map(encodeURIComponent).join(",") + ")" + amb() + "&order=atualizado_em.desc", { method: "GET" });
 // Atualiza só se a condição ainda valer (assim só uma chamada assume cada tentativa)
 const atualizarTentativaSe = (id, condicao, campos) =>
   req("plugpay_tentativas?id=eq." + Number(id) + amb() + condicao,
