@@ -598,7 +598,14 @@ async function tratar(event) {
 
     case "link-listar": {
       if (!db.enabled()) return json(503, { error: "Supabase não configurado" });
-      return json(200, { links: await db.listarLinks(req.limite || 30) });
+      const links = await db.listarLinks(req.limite || 30);
+      const livres = links.filter((l) => !l.id_transacao && !l.usado_em).map((l) => l.token);
+      const falhas = await db.falhasDeLinks(livres).catch(() => []);
+      for (const l of links) { // a 1ª da lista é a mais recente
+        const f = falhas.find((x) => x.link_token === l.token);
+        if (f && !l.usado_em && !l.id_transacao) l.falha = { erro: f.ultimo_erro || "erro sem detalhe", em: f.atualizado_em };
+      }
+      return json(200, { links });
     }
 
     // Anexa/corrige o número do pedido e a nota fiscal depois da venda
