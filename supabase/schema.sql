@@ -70,6 +70,13 @@ create table if not exists public.plugpay_links (
   id_transacao  bigint                                        -- IdTransacao da PlugPay, depois de gerada
 );
 create index if not exists plugpay_links_criado_idx on public.plugpay_links (criado_em desc);
+-- Retentativas ao gerar o Pix (feitas pelo servidor, uma por chamada, com 30 s entre elas)
+alter table public.plugpay_links add column if not exists tentativa            smallint not null default 0;
+alter table public.plugpay_links add column if not exists tentativa_estado     text;        -- null | aguardando | gerando
+alter table public.plugpay_links add column if not exists proxima_tentativa_em timestamptz;
+alter table public.plugpay_links add column if not exists gerando_ate          timestamptz; -- reserva curta: se a chamada morrer, outra assume
+alter table public.plugpay_links add column if not exists pendente_nome        text;        -- só enquanto as tentativas correm; apagado depois
+alter table public.plugpay_links add column if not exists pendente_cpf         text;
 alter table public.plugpay_links enable row level security;
 
 -- Guarda o QR para poder reabrir a cobrança sem chamar a PlugPay de novo

@@ -124,3 +124,13 @@ Uma função agendada (`netlify/functions/padronizar-nomes.js`, a cada 10 minuto
 - Cada execução que altera algo grava uma linha `rotina-nomes` no painel de logs, com o de/para (CPF mascarado). Se nada mudou, não grava nada.
 - Funções agendadas só rodam no deploy publicado do Netlify. Para rodar agora: abra `/.netlify/functions/padronizar-nomes` (no máximo uma vez por minuto).
 - Rode o `supabase/schema.sql` antes de publicar (colunas `nome_informado` e `nome_manual_em`).
+
+## Retentativas ao gerar o Pix pelo link
+
+Quando a PlugPay responde "CPF não registrado" (ou falha do lado dela), o servidor tenta de novo, no máximo **3 tentativas** no total, com **30 segundos** entre elas (`TENTATIVA_ESPERA_SEG` muda a espera).
+
+- Quem faz a espera e as tentativas é o servidor, **uma tentativa por chamada**: o estado fica no link (`plugpay_links`: `tentativa`, `tentativa_estado`, `proxima_tentativa_em`, `gerando_ate`, `pendente_nome`, `pendente_cpf`). O navegador só pergunta de tempos em tempos (`link-avancar`); a chamada que chega depois dos 30 s reivindica a tentativa de forma atômica e a executa.
+- O cliente vê "Tentativa 2 de 3" com a contagem regressiva. Na 3ª falha vê "Tente de novo ou chame o atendimento", com **Tentar de novo** (nova rodada de 3) e **Chamar atendimento** (WhatsApp `wa.me/5535999018000`).
+- Erros que não adiantam repetir (pedido inválido etc.) não gastam as tentativas. Nome e CPF guardados para as tentativas são apagados do link ao terminar.
+- Antes de publicar, rode `supabase/schema.sql` (só acrescenta colunas).
+- Limitação: se o cliente fechar a página durante a espera, as tentativas param até ele reabrir o link.

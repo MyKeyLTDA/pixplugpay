@@ -311,7 +311,14 @@ const LINK_VALIDADE_MIN = () => Number(process.env.LINK_VALIDADE_MIN) || 24 * 60
 // O que o cliente pode ver de um link: nunca CPF, nome de outros, documento do merchant etc.
 async function visaoDoLink(link) {
   const base = { descricao: link.descricao, valorBRL: Number(link.valor_brl), expirado: new Date(link.expira_em) < new Date() };
-  if (!link.id_transacao) return { ...base, estado: "aguardando" };
+  if (!link.id_transacao) {
+    // Retentativas em andamento (feitas pelo servidor, uma por chamada): o cliente só acompanha
+    if (link.tentativa_estado === "aguardando" || link.tentativa_estado === "gerando") {
+      const espera = link.tentativa_estado === "aguardando" ? Math.max(0, Math.ceil((new Date(link.proxima_tentativa_em) - Date.now()) / 1000)) : 0;
+      return { ...base, estado: "tentando", tentativa: Number(link.tentativa || 0) + (link.tentativa_estado === "aguardando" ? 1 : 0), de: TENTATIVAS_MAX, segundos: espera };
+    }
+    return { ...base, estado: "aguardando" };
+  }
   const t = await db.buscarPorIdTransacao(link.id_transacao);
   return { ...base, estado: "gerada", status: t ? t.status : 5, qrCopiaCola: t ? t.qr_copia_cola : null, valorBRL: t && t.valor_brl ? Number(t.valor_brl) : base.valorBRL };
 }
@@ -328,6 +335,8 @@ async function tratarLinkPublico(req, merchant) {
 
   if (req.action === "link-info") return json(200, await visaoDoLink(link));
 
+  if (req.action === "link-avancar") return avancarLink(link, token, merchant);
+
   // link-gerar
   const nome = String(req.nome || "").trim().slice(0, 100);
   if (nome.length < 3) return json(400, { error: "Informe seu nome completo." });
@@ -335,30 +344,79 @@ async function tratarLinkPublico(req, merchant) {
   if (link.id_transacao) return json(200, await visaoDoLink(link)); // já gerado: mostra o mesmo Pix
   if (new Date(link.expira_em) < new Date()) return json(410, { error: "Este link expirou. Peça um novo ao atendente." });
 
-  // Reserva o link de forma atômica: dois cliques ao mesmo tempo não geram dois Pix
-  const reservado = await db.atualizarLinkSe(token, "&usado_em=is.null", { usado_em: new Date().toISOString() });
+  // Reserva o link de forma atômica: dois cliques ao mesmo tempo não geram dois Pix.
+  // Já guarda nome e CPF no servidor: as retentativas não dependem do navegador do cliente.
+  const reservado = await db.atualizarLinkSe(token, "&usado_em=is.null", {
+    usado_em: new Date().toISOString(), tentativa: 1, tentativa_estado: "gerando", gerando_ate: new Date(Date.now() + LEASE_MS).toISOString(),
+    proxima_tentativa_em: null, pendente_nome: nome, pendente_cpf: onlyDigits(req.cpf),
+  });
   if (!reservado) {
     const atual = await db.buscarLink(token);
     return json(200, await visaoDoLink(atual || link));
   }
-  const liberar = () => db.atualizarLinkSe(token, "", { usado_em: null }).catch(() => {});
+  return concluirTentativa(link, token, 1, await tentarGerar(link, token, merchant, nome, onlyDigits(req.cpf)));
+}
 
-  let e;
+const TENTATIVAS_MAX = 3;
+const ESPERA_MS = () => (Number(process.env.TENTATIVA_ESPERA_SEG) || 30) * 1000;
+const LEASE_MS = 90 * 1000; // se a chamada morrer no meio, outra assume depois disso
+
+// Erros que valem nova tentativa: falha do servidor da PlugPay e o "CPF não registrado" (o suporte deles só manda tentar de novo)
+const retentavel = (erro) => erro.status >= 500 || (erro.status === 422 && /registrado/i.test(String((erro.body && erro.body.message) || "")));
+
+const LIMPA_TENTATIVA = { usado_em: null, tentativa: 0, tentativa_estado: null, proxima_tentativa_em: null, gerando_ate: null, pendente_nome: null, pendente_cpf: null };
+
+// Uma tentativa de gerar o Pix. Devolve { ok: resposta } | { retentar: true } | { fatal: resposta }
+async function tentarGerar(link, token, merchant, nome, cpf) {
   try {
-    e = await emitirPix({ customerCPF: onlyDigits(req.cpf), valorBRL: Number(link.valor_brl), moedaEnvio: link.moeda_envio }, merchant);
+    const e = await emitirPix({ customerCPF: cpf, valorBRL: Number(link.valor_brl), moedaEnvio: link.moeda_envio }, merchant);
+    if (e.erro) {
+      console.error("link-gerar recusado:", JSON.stringify(e.erro.body).slice(0, 300));
+      return retentavel(e.erro) ? { retentar: true } : { fatal: json(502, { error: LINK_ERRO_GENERICO }) };
+    }
+    await guardarCobranca("PIX", {
+      moeda: e.moeda, valor: e.value, documentMerchant: merchant, cpfCliente: e.cpf, nomeCliente: nome,
+      descricao: link.descricao, criadoPor: link.criado_por,
+    }, e.r.data);
+    const limpa = { tentativa_estado: null, proxima_tentativa_em: null, gerando_ate: null, pendente_nome: null, pendente_cpf: null };
+    if (e.r.data && e.r.data.IdTransacao) await db.atualizarLinkSe(token, "", { id_transacao: e.r.data.IdTransacao, ...limpa }).catch((err) => console.error("link:", err.message));
+    return { ok: json(200, { ...base_vazio(), estado: "gerada", status: 5, qrCopiaCola: e.r.data.qrCodeCopiaCola || null, valorBRL: Number(e.r.data.valueBRL) || Number(link.valor_brl), descricao: link.descricao }) };
   } catch (err) {
-    await liberar(); console.error("link-gerar:", err.message);
-    if (err && (err.status === 429 || err.status === 503)) { const r = respostaDeErro(err); r.body = JSON.stringify({ error: "Muitas solicitações no momento. Aguarde alguns segundos e tente de novo." }); return r; }
-    return json(502, { error: LINK_ERRO_GENERICO });
+    console.error("link-gerar:", err.message);
+    return { retentar: true }; // rede, token ou limite: também vale tentar de novo
   }
-  if (e.erro) { await liberar(); console.error("link-gerar recusado:", JSON.stringify(e.erro.body).slice(0, 300)); return json(502, { error: LINK_ERRO_GENERICO }); }
+}
 
-  await guardarCobranca("PIX", {
-    moeda: e.moeda, valor: e.value, documentMerchant: merchant, cpfCliente: e.cpf, nomeCliente: nome,
-    descricao: link.descricao, criadoPor: link.criado_por,
-  }, e.r.data);
-  if (e.r.data && e.r.data.IdTransacao) await db.atualizarLinkSe(token, "", { id_transacao: e.r.data.IdTransacao }).catch((err) => console.error("link:", err.message));
-  return json(200, { ...base_vazio(), estado: "gerada", status: 5, qrCopiaCola: e.r.data.qrCodeCopiaCola || null, valorBRL: Number(e.r.data.valueBRL) || Number(link.valor_brl), descricao: link.descricao });
+// Depois de uma tentativa: sucesso, agenda a próxima (30 s depois, em outra chamada) ou desiste na 3ª
+async function concluirTentativa(link, token, numero, r) {
+  if (r.ok) return r.ok;
+  if (r.fatal) { await db.atualizarLinkSe(token, "", LIMPA_TENTATIVA).catch(() => {}); return r.fatal; }
+  if (numero < TENTATIVAS_MAX) {
+    const proxima = new Date(Date.now() + ESPERA_MS()).toISOString();
+    await db.atualizarLinkSe(token, "", { tentativa: numero, tentativa_estado: "aguardando", proxima_tentativa_em: proxima, gerando_ate: null });
+    return json(200, { ...base_vazio(), descricao: link.descricao, valorBRL: Number(link.valor_brl), estado: "tentando", tentativa: numero + 1, de: TENTATIVAS_MAX, segundos: Math.ceil(ESPERA_MS() / 1000) });
+  }
+  await db.atualizarLinkSe(token, "", LIMPA_TENTATIVA).catch(() => {}); // libera o link para "Tentar de novo"
+  return json(200, { ...base_vazio(), descricao: link.descricao, valorBRL: Number(link.valor_brl), estado: "falhou", de: TENTATIVAS_MAX });
+}
+
+// Chamada de acompanhamento feita pela página: se já passou a espera, ESTA chamada executa a próxima tentativa
+async function avancarLink(link, token, merchant) {
+  if (link.id_transacao || !(link.tentativa_estado === "aguardando" || link.tentativa_estado === "gerando")) return json(200, await visaoDoLink(link));
+  if (new Date(link.expira_em) < new Date()) { await db.atualizarLinkSe(token, "", LIMPA_TENTATIVA).catch(() => {}); return json(410, { error: "Este link expirou. Peça um novo ao atendente." }); }
+  const agora = new Date().toISOString();
+  const numero = Number(link.tentativa || 0) + 1;
+  if (numero > TENTATIVAS_MAX) { // chamada anterior morreu na última tentativa
+    if (link.tentativa_estado === "gerando" && new Date(link.gerando_ate) > new Date()) return json(200, await visaoDoLink(link));
+    return concluirTentativa(link, token, TENTATIVAS_MAX, { retentar: true });
+  }
+  // Reivindica a tentativa de forma atômica: só uma chamada executa cada vez
+  const cond = "&id_transacao=is.null&tentativa=eq." + Number(link.tentativa || 0) +
+    "&or=(and(tentativa_estado.eq.aguardando,proxima_tentativa_em.lte." + agora + "),and(tentativa_estado.eq.gerando,gerando_ate.lt." + agora + "))";
+  const c = await db.atualizarLinkSe(token, cond, { tentativa: numero, tentativa_estado: "gerando", gerando_ate: new Date(Date.now() + LEASE_MS).toISOString() });
+  if (!c) { const atual = await db.buscarLink(token); return json(200, await visaoDoLink(atual || link)); } // ainda esperando (ou outra chamada pegou)
+  ctx.acao = "link-gerar";
+  return concluirTentativa(c, token, numero, await tentarGerar(c, token, merchant, c.pendente_nome, c.pendente_cpf));
 }
 const base_vazio = () => ({ expirado: false });
 
@@ -377,8 +435,8 @@ async function tratar(event) {
   }
 
   // Ações do cliente com link de pagamento: sem login, protegidas pelo token do link
-  if (req.action === "link-info" || req.action === "link-gerar") {
-    if (req.action === "link-gerar") ctx.usuario = "cliente (link)";
+  if (req.action === "link-info" || req.action === "link-gerar" || req.action === "link-avancar") {
+    if (req.action !== "link-info") ctx.usuario = "cliente (link)";
     return tratarLinkPublico(req, process.env.PLUGPAY_MERCHANT_DOC);
   }
 

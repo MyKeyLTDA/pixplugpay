@@ -37,6 +37,8 @@
   .pelicula { position:fixed; inset:0; z-index:2000; background:rgba(255,255,255,.6); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; cursor:wait; font-weight:600; color:var(--navy); }
   .pelicula.hidden { display:none !important; }
   .spinner { width:46px; height:46px; border:5px solid rgba(18,40,76,.2); border-top-color:var(--orange); border-radius:50%; animation:gira .8s linear infinite; }
+  a.botao { display:block; text-align:center; text-decoration:none; width:100%; margin-top:12px; padding:14px; border-radius:8px; font-size:16px; font-weight:700; border:2px solid var(--orange); color:var(--orange); }
+  button.sec { width:100%; margin-top:18px; padding:14px; border-radius:8px; background:var(--orange); color:#fff; border:0; font-size:16px; font-weight:700; cursor:pointer; }
   @keyframes gira { to { transform:rotate(360deg); } }
 </style>
 </head>
@@ -70,6 +72,19 @@
     </form>
   </section>
 
+  <section class="card hidden center" id="tentando">
+    <h1 id="tentTitulo">Ainda gerando seu Pix…</h1>
+    <div class="spinner" style="margin:18px auto"></div>
+    <div id="tentTexto" class="sub" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="card hidden center" id="falhou">
+    <h1>Tente de novo ou chame o atendimento</h1>
+    <div class="sub">Não conseguimos gerar o Pix depois de 3 tentativas.</div>
+    <button class="sec" id="tentarDeNovo" type="button">Tentar de novo</button>
+    <a class="botao" id="chamarAtendimento" href="https://wa.me/5535999018000" target="_blank" rel="noopener">Chamar atendimento</a>
+  </section>
+
   <section class="card hidden center" id="pix">
     <h1 id="pixDesc"></h1>
     <div class="amount" id="pixValor"></div>
@@ -100,7 +115,7 @@ async function api(body, silencioso) {
     if (!silencioso && --carregandoN <= 0) { carregandoN = 0; clearTimeout(peliculaT); $("pelicula").classList.add("hidden"); }
   }
 }
-function mostrar(id) { ["carregando", "erro", "dados", "pix"].forEach(x => $(x).classList.toggle("hidden", x !== id)); }
+function mostrar(id) { ["carregando", "erro", "dados", "tentando", "falhou", "pix"].forEach(x => $(x).classList.toggle("hidden", x !== id)); }
 function erro(titulo, texto) { $("erroTitulo").textContent = titulo; $("erroTexto").textContent = texto; mostrar("erro"); }
 
 function qrDoCodigo(codigo) {
@@ -123,7 +138,28 @@ function telaPix(d) {
   clearInterval(poller);
   if (!d.status || d.status === 5) poller = setInterval(async () => { try { pintarStatus((await api({ action: "link-info" }, true)).status); } catch (_) {} }, 5000);
 }
+let acompanhaT = null, contaT = null;
+function paraAcompanhamento() { clearTimeout(acompanhaT); clearInterval(contaT); acompanhaT = contaT = null; }
+// O servidor é quem espera e tenta de novo; aqui só mostramos o aviso e perguntamos, a cada poucos segundos, como está
+function telaTentando(d) {
+  paraAcompanhamento();
+  $("tentTitulo").textContent = "Tentativa " + d.tentativa + " de " + d.de;
+  let falta = Number(d.segundos) || 0;
+  const pinta = () => { $("tentTexto").textContent = falta > 0
+    ? "Não foi possível gerar o Pix ainda. Vamos tentar de novo em " + falta + " s. Mantenha esta página aberta."
+    : "Tentando gerar o Pix agora…"; };
+  pinta(); mostrar("tentando");
+  contaT = setInterval(() => { if (falta > 0) { falta--; pinta(); } }, 1000);
+  const volta = async () => {
+    try { const r = await api({ action: "link-avancar" }, true); aplicar(r); }
+    catch (err) { if (err.http === 410) return erro("Link expirado", "Peça um novo link ao atendente."); acompanhaT = setTimeout(volta, 4000); }
+  };
+  acompanhaT = setTimeout(volta, 3000);
+}
 function aplicar(d) {
+  if (d.estado !== "tentando") paraAcompanhamento();
+  if (d.estado === "tentando") return telaTentando(d);
+  if (d.estado === "falhou") return mostrar("falhou");
   if (d.estado === "gerada") return telaPix(d);
   if (d.expirado) return erro("Link expirado", "Peça um novo link ao atendente.");
   $("desc").textContent = d.descricao || "Pagamento";
@@ -141,6 +177,15 @@ function validCPF(c) {
   for (let t = 9; t < 11; t++) { let s = 0; for (let i = 0; i < t; i++) s += +c[i] * (t + 1 - i); if (((s * 10) % 11) % 10 !== +c[t]) return false; }
   return true;
 }
+async function gerar() {
+  const nome = $("nome").value.trim();
+  aplicar(await api({ action: "link-gerar", nome, cpf: $("cpf").value.replace(/\D/g, "") }));
+}
+$("tentarDeNovo").onclick = async () => {
+  $("tentarDeNovo").disabled = true;
+  try { await gerar(); } catch (err) { erro("Não foi possível continuar", err.message); }
+  finally { $("tentarDeNovo").disabled = false; }
+};
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const m = $("msg"); m.className = "msg";
@@ -148,7 +193,7 @@ $("form").addEventListener("submit", async (e) => {
   if (nome.length < 3) { m.textContent = "Informe seu nome completo."; m.className = "msg err"; return; }
   if (!validCPF($("cpf").value)) { m.textContent = "CPF inválido."; m.className = "msg err"; return; }
   $("btn").disabled = true; $("btn").textContent = "Gerando…";
-  try { aplicar(await api({ action: "link-gerar", nome, cpf: $("cpf").value.replace(/\D/g, "") })); }
+  try { await gerar(); }
   catch (err) { m.textContent = err.message; m.className = "msg err"; }
   finally { $("btn").disabled = false; $("btn").textContent = "Gerar Pix"; }
 });
