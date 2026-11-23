@@ -70,13 +70,29 @@ create table if not exists public.plugpay_links (
   id_transacao  bigint                                        -- IdTransacao da PlugPay, depois de gerada
 );
 create index if not exists plugpay_links_criado_idx on public.plugpay_links (criado_em desc);
--- Retentativas ao gerar o Pix (feitas pelo servidor, uma por chamada, com 30 s entre elas)
-alter table public.plugpay_links add column if not exists tentativa            smallint not null default 0;
-alter table public.plugpay_links add column if not exists tentativa_estado     text;        -- null | aguardando | gerando
-alter table public.plugpay_links add column if not exists proxima_tentativa_em timestamptz;
-alter table public.plugpay_links add column if not exists gerando_ate          timestamptz; -- reserva curta: se a chamada morrer, outra assume
-alter table public.plugpay_links add column if not exists pendente_nome        text;        -- só enquanto as tentativas correm; apagado depois
-alter table public.plugpay_links add column if not exists pendente_cpf         text;
+-- Tentativas de gerar o Pix (link do cliente e tela do atendente): até 3, com 30 s entre elas,
+-- cada uma numa chamada separada do servidor. O estado fica aqui, não no navegador.
+create table if not exists public.plugpay_tentativas (
+  id            bigint generated always as identity primary key,
+  ambiente      text        not null default 'sandbox',
+  tipo          text        not null,                 -- link | atendente
+  link_token    text,                                 -- só no tipo link
+  usuario       text,
+  pedido        jsonb,                                -- dados para repetir (CPF, nome, valor); apagado ao terminar
+  tentativa     smallint    not null default 0,
+  estado        text        not null,                 -- gerando | aguardando | ok | falhou
+  proxima_em    timestamptz,
+  gerando_ate   timestamptz,                          -- reserva curta: se a chamada morrer, outra assume
+  id_transacao  bigint,                               -- o Pix que valeu
+  transacoes    jsonb       not null default '[]',    -- IdTransacao de todo Pix que a PlugPay criou nas tentativas
+  resultado     jsonb,                                -- resposta para a tela do atendente
+  ultimo_erro   text,
+  criado_em     timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+create index if not exists plugpay_tentativas_pend_idx on public.plugpay_tentativas (estado, proxima_em);
+create index if not exists plugpay_tentativas_link_idx on public.plugpay_tentativas (link_token, criado_em desc);
+alter table public.plugpay_tentativas enable row level security;  -- sem policies: só a chave de serviço (servidor) acessa
 alter table public.plugpay_links enable row level security;
 
 -- Guarda o QR para poder reabrir a cobrança sem chamar a PlugPay de novo

@@ -66,6 +66,33 @@ global.fetch = async (url, opts) => {
     if (t === "Bearer tokbom") return ok({ id: "u1", email: "usuario1@exemplo.com.br" });
     return { ok: false, status: 401, text: async () => "{}", json: async () => ({}) };
   }
+  if (url.includes("plugpay-tentativa-background")) {
+    global.__despachos = (global.__despachos || []).concat({ url, interno: (opts.headers || {})["x-interno"], body: JSON.parse(opts.body) });
+    return ok({});
+  }
+  if (url.includes("supabase.co") && url.includes("plugpay_tentativas")) {
+    const m = opts.method || "GET"; const T = (global.__tent = global.__tent || []);
+    if (m === "POST") { const row = { id: T.length + 1, criado_em: new Date().toISOString(), transacoes: [], ...JSON.parse(opts.body) }; T.push(row); return ok([{ ...row }]); }
+    const idm = url.match(/[?&]id=eq\.(\d+)/), lt = url.match(/link_token=eq\.([^&]+)/);
+    let rows = T.filter((r) => (!idm || r.id === +idm[1]) && (!lt || r.link_token === decodeURIComponent(lt[1])));
+    if (m === "GET") {
+      if (url.includes("or=(and(")) {
+        const agora = new Date(url.match(/lt\.([^,)]+)/)[1]);
+        rows = rows.filter((r) => (r.estado === "aguardando" && new Date(r.proxima_em) < agora) || (r.estado === "gerando" && new Date(r.gerando_ate) < agora)).map((r) => ({ id: r.id }));
+      }
+      if (lt) rows = rows.slice(-1);
+      return ok(rows.map((r) => ({ ...r })));
+    }
+    if (m === "PATCH") {
+      const r0 = rows[0]; if (!r0) return ok([]);
+      if (url.includes("or=(and(")) {
+        const n = +url.match(/tentativa=eq\.(\d+)/)[1], agora = new Date(url.match(/lte\.([^,)]+)/)[1]);
+        const ocioso = r0.estado === "aguardando" && new Date(r0.proxima_em) <= agora, vencida = r0.estado === "gerando" && new Date(r0.gerando_ate) < agora;
+        if (r0.tentativa !== n || !(ocioso || vencida)) return ok([]);
+      }
+      Object.assign(r0, JSON.parse(opts.body)); return ok([{ ...r0 }]);
+    }
+  }
   if (url.includes("supabase.co") && url.includes("plugpay_links")) {
     const m = opts.method || "GET";
     if (m === "POST") { const row = { id: 1, ...JSON.parse(opts.body) }; return ok([row]); }
@@ -522,11 +549,18 @@ const H = { authorization: "Bearer tokbom" };
         return { ok: false, status: "customerCPFCNPJ" in b ? 422 : 400, text: async () => JSON.stringify({ message: msg }) }; }
       return antes(u, o);
     };
+    global.__tent = [];
+    process.env.URL = "https://teste.netlify.app";
     r = await chama({ action: "create-pix", valorBRL: 10, customerCPF: "52998224725", nomeCliente: "Fulano" });
+    assert.strictEqual(r.statusCode, 202, "CPF não registrado entra nas tentativas: " + r.body);
+    const jid = JSON.parse(r.body).job, pmx = require("../netlify/functions/plugpay");
+    for (let k = 0; k < 2; k++) { global.__tent[0].proxima_em = new Date(Date.now() - 1000).toISOString(); await pmx.processarTentativa(jid); }
     global.fetch = antes;
+    r = await chama({ action: "tentativa-status", job: jid });
     const e = JSON.parse(r.body);
-    assert.ok(/não está registrado/.test(e.message) && /no está registrado/.test(e.message), e.message);
-    assert.ok(global.__n422 <= 2, "no máx. uma troca de campo");
+    assert.strictEqual(e.estado, "falhou");
+    assert.ok(/não está registrado/.test(e.ultimoErro) && /no está registrado/.test(e.ultimoErro), e.ultimoErro);
+    assert.ok(global.__n422 <= 6, "no máx. uma troca de campo por tentativa");
     console.log("ok 15: erro real da PlugPay preservado");
   }
 
@@ -639,55 +673,100 @@ const H = { authorization: "Bearer tokbom" };
     console.log("ok 16: lote de logs com as mesmas chaves");
   }
 
-  // 20) retentativas ao gerar o Pix pelo link: 3 tentativas, 30 s entre elas, cada uma em outra chamada do servidor
+  // 20) tentativas de gerar o Pix: 3 tentativas, 30 s entre elas, feitas pelo SERVIDOR (cada uma em outra chamada),
+  //     sem depender de a página ficar aberta; vale para o link do cliente e para a tela do atendente
   {
-    const novoLink = () => { global.__linkSim = true; global.__creates = 0;
+    process.env.URL = "https://teste.netlify.app";
+    const pm = require("../netlify/functions/plugpay");
+    const T = () => global.__tent;
+    const novoLink = () => { global.__linkSim = true; global.__creates = 0; global.__tent = []; global.__despachos = [];
       global.__linkRow = { id: 9, token: tok, valor_brl: 80, moeda_envio: "PYG", descricao: "Senha Kia", criado_por: "usuario1@exemplo.com.br",
-        expira_em: new Date(Date.now() + 3600e3).toISOString(), usado_em: null, id_transacao: null, tentativa: 0, tentativa_estado: null, proxima_tentativa_em: null, gerando_ate: null, pendente_nome: null, pendente_cpf: null }; };
-    const passou30s = () => { global.__linkRow.proxima_tentativa_em = new Date(Date.now() - 1000).toISOString(); };
+        expira_em: new Date(Date.now() + 3600e3).toISOString(), usado_em: null, id_transacao: null }; };
+    const passou30s = (job) => { job.proxima_em = new Date(Date.now() - 1000).toISOString(); };
     const gerarLink = () => chama({ action: "link-gerar", token: tok, nome: "Maria Silva", cpf: "529.982.247-25" }, {});
-    const avancar = () => chama({ action: "link-avancar", token: tok }, {});
+    const info = async () => JSON.parse((await chama({ action: "link-info", token: tok }, {})).body);
 
-    // a) duas falhas "CPF não registrado" e sucesso na 3ª
+    // a) link: duas falhas "CPF não registrado" e sucesso na 3ª — o servidor anda sozinho, a página só olha
     novoLink(); global.__createFalhas = 2;
     r = await gerarLink(); v = JSON.parse(r.body);
-    assert.strictEqual(r.statusCode, 200); assert.strictEqual(v.estado, "tentando");
-    assert.strictEqual(v.tentativa, 2); assert.strictEqual(v.de, 3); assert.strictEqual(v.segundos, 30);
+    assert.strictEqual(v.estado, "tentando"); assert.strictEqual(v.tentativa, 2); assert.strictEqual(v.de, 3); assert.strictEqual(v.segundos, 30);
     assert.strictEqual(global.__creates, 1);
-    assert.strictEqual(global.__linkRow.pendente_cpf, "52998224725", "nome e CPF ficam no servidor");
-    r = await avancar(); v = JSON.parse(r.body);                       // ainda não passaram os 30 s: não chama a PlugPay
-    assert.strictEqual(v.estado, "tentando"); assert.strictEqual(global.__creates, 1, "espera de 30 s respeitada");
-    assert.ok(v.segundos > 0 && v.segundos <= 30);
-    r = await gerarLink(); assert.strictEqual(JSON.parse(r.body).estado, "tentando"); assert.strictEqual(global.__creates, 1, "novo clique não duplica");
-    passou30s(); r = await avancar(); v = JSON.parse(r.body);          // 2ª tentativa (outra chamada): falha de novo
-    assert.strictEqual(v.estado, "tentando"); assert.strictEqual(v.tentativa, 3); assert.strictEqual(global.__creates, 2);
-    passou30s(); r = await avancar(); v = JSON.parse(r.body);          // 3ª tentativa: sucesso
-    assert.strictEqual(v.estado, "gerada"); assert.ok(v.qrCopiaCola); assert.strictEqual(global.__creates, 3);
+    assert.strictEqual(global.__despachos.length, 1, "servidor dispara a próxima tentativa (função em segundo plano)");
+    assert.ok(global.__despachos[0].url.endsWith("/.netlify/functions/plugpay-tentativa-background") && global.__despachos[0].interno && global.__despachos[0].body.id === 1);
+    assert.ok(!JSON.stringify(global.__despachos).includes("52998224725"), "o disparo não leva CPF");
+    assert.strictEqual(T()[0].pedido.cpf, "52998224725", "CPF fica no servidor");
+    v = await info(); assert.strictEqual(v.estado, "tentando"); assert.strictEqual(global.__creates, 1, "só olhar não executa nada");
+    await pm.processarTentativa(1); assert.strictEqual(global.__creates, 1, "antes dos 30 s: nada acontece");
+    passou30s(T()[0]); await pm.processarTentativa(1);              // outra chamada do servidor: 2ª tentativa falha
+    assert.strictEqual(global.__creates, 2); assert.strictEqual(global.__despachos.length, 2);
+    v = await info(); assert.strictEqual(v.estado, "tentando"); assert.strictEqual(v.tentativa, 3);
+    T()[0].transacoes = [111];                                       // um Pix criado numa tentativa anterior (resposta perdida)
+    passou30s(T()[0]); await pm.processarTentativa(1);              // 3ª tentativa: sucesso
+    assert.strictEqual(global.__creates, 3); assert.strictEqual(T()[0].estado, "ok"); assert.strictEqual(T()[0].pedido, null, "CPF apagado ao terminar");
+    v = await info(); assert.strictEqual(v.estado, "gerada"); assert.ok(v.qrCopiaCola);
     assert.strictEqual(global.__linkRow.id_transacao, 889);
-    assert.strictEqual(global.__linkRow.pendente_cpf, null, "CPF apagado do link depois de gerar");
-    for (const proibido of ["889", "00000000-aaaa", "IdTransacao", "qrCodeId", "pendente", "criado_por", "usuario1", "52998224725"]) assert.ok(!r.body.includes(proibido), "vaza " + proibido);
+    const corpoInfo = JSON.stringify(v);
+    for (const proibido of ["889", "00000000-aaaa", "IdTransacao", "qrCodeId", "pedido", "criado_por", "usuario1", "52998224725"]) assert.ok(!corpoInfo.includes(proibido), "vaza " + proibido);
+    assert.ok(calls.some((c) => c.url.includes("plugpay_transacoes?id=eq.7") && c.body && c.body.status === 6 && /Substituído/.test(c.body.observacoes) && /só aqui/.test(c.body.observacoes)),
+      "Pix substituído fica cancelado para nós (a PlugPay não tem rota de cancelamento configurada)");
 
-    // b) 3 falhas: "falhou", link liberado, e "Tentar de novo" começa outra rodada de 3
+    // b) 3 falhas: o servidor desiste sozinho; a página (mesmo reaberta depois) vê "falhou"; "Tentar de novo" começa outra rodada
     novoLink(); global.__createFalhas = 99;
-    await gerarLink(); passou30s(); await avancar(); passou30s(); r = await avancar(); v = JSON.parse(r.body);
-    assert.strictEqual(v.estado, "falhou"); assert.strictEqual(v.de, 3); assert.strictEqual(global.__creates, 3);
-    assert.strictEqual(global.__linkRow.usado_em, null); assert.strictEqual(global.__linkRow.pendente_cpf, null);
-    r = await avancar(); assert.strictEqual(JSON.parse(r.body).estado, "aguardando", "sem tentativas pendentes não chama a PlugPay"); assert.strictEqual(global.__creates, 3);
-    global.__createFalhas = 0; r = await gerarLink(); assert.strictEqual(JSON.parse(r.body).estado, "gerada", "Tentar de novo funciona");
-
-    // c) erro que não adianta repetir (ex.: pedido inválido) não gasta as 3 tentativas
-    novoLink(); global.__createErro = { status: 400, message: "Valor inválido" };
-    r = await gerarLink(); assert.strictEqual(r.statusCode, 502); assert.strictEqual(global.__creates, 1);
+    await gerarLink(); passou30s(T()[0]); await pm.processarTentativa(1); passou30s(T()[0]); await pm.processarTentativa(1);
+    assert.strictEqual(global.__creates, 3); assert.strictEqual(T()[0].estado, "falhou"); assert.strictEqual(T()[0].pedido, null);
+    v = await info(); assert.strictEqual(v.estado, "falhou"); assert.strictEqual(v.de, 3);
     assert.strictEqual(global.__linkRow.usado_em, null, "link liberado");
-    global.__createErro = null;
+    await pm.processarTentativa(1); assert.strictEqual(global.__creates, 3, "job encerrado não executa mais nada");
+    global.__createFalhas = 0; r = await gerarLink(); assert.strictEqual(JSON.parse(r.body).estado, "gerada", "Tentar de novo funciona");
+    assert.strictEqual(T().length, 2, "nova rodada = novo job");
 
-    // d) duas chamadas de acompanhamento ao mesmo tempo: só uma executa a tentativa
-    novoLink(); global.__createFalhas = 1; await gerarLink(); passou30s();
-    const [a, b2] = await Promise.all([avancar(), avancar()]);
-    assert.strictEqual(global.__creates, 2, "uma única chamada executa a tentativa");
-    assert.ok(a.statusCode === 200 && b2.statusCode === 200 && !(a.body + b2.body).includes("pendente"));
-    global.__linkSim = false; global.__createFalhas = 0; global.__createErro = null;
-    console.log("ok 20: retentativas do link (3 tentativas, 30 s no servidor, uma por chamada)");
+    // c) erro que não adianta repetir não gasta as 3 tentativas
+    novoLink(); global.__createErro = { status: 400, message: "Valor inválido" };
+    r = await gerarLink(); assert.strictEqual(r.statusCode, 502); assert.strictEqual(global.__creates, 1); assert.strictEqual(global.__despachos.length, 0);
+    assert.strictEqual(global.__linkRow.usado_em, null); global.__createErro = null;
+
+    // d) duas chamadas do servidor ao mesmo tempo (função em segundo plano + varredura): só uma executa a tentativa
+    novoLink(); global.__createFalhas = 1; await gerarLink(); passou30s(T()[0]);
+    await Promise.all([pm.processarTentativa(1), pm.processarTentativa(1)]);
+    assert.strictEqual(global.__creates, 2, "uma única chamada executa a tentativa"); assert.strictEqual(T()[0].estado, "ok");
+
+    // e) varredura de 1 min: pega tentativa parada (função em segundo plano que não rodou) e a "gerando" com reserva vencida
+    novoLink(); global.__createFalhas = 1; await gerarLink();
+    assert.deepStrictEqual(await pm.varrerTentativas(), [], "ainda dentro do prazo: a varredura não mexe");
+    T()[0].proxima_em = new Date(Date.now() - 20000).toISOString();
+    assert.deepStrictEqual(await pm.varrerTentativas(), [1]); assert.strictEqual(T()[0].estado, "ok");
+    novoLink(); await gerarLink(); // sucesso direto; depois simula uma chamada que morreu no meio
+    global.__tent = [{ id: 1, tipo: "link", link_token: tok, tentativa: 1, estado: "gerando", gerando_ate: new Date(Date.now() - 20000).toISOString(),
+      pedido: { cpf: "52998224725", nome: "Maria", valorBRL: 80, moedaEnvio: "PYG" }, transacoes: [] }];
+    global.__linkRow.id_transacao = null; global.__linkRow.usado_em = new Date().toISOString(); global.__creates = 0;
+    assert.deepStrictEqual(await pm.varrerTentativas(), [1]); assert.strictEqual(global.__creates, 1); assert.strictEqual(T()[0].estado, "ok");
+
+    // f) o endpoint em segundo plano só aceita chamada interna
+    const bg = require("../netlify/functions/plugpay-tentativa-background").handler;
+    assert.strictEqual((await bg({ headers: {}, body: JSON.stringify({ id: 1 }) })).statusCode, 401);
+    assert.strictEqual((await bg({ headers: { "x-interno": pm.segredoInterno() }, body: JSON.stringify({ id: 1 }) })).statusCode, 202);
+
+    // g) tela do atendente: também tem tentativas; sucesso depois de falhar; falha total com a mensagem da PlugPay
+    global.__linkSim = false; global.__tent = []; global.__despachos = []; global.__creates = 0; global.__createFalhas = 1;
+    const pedidoAt = { action: "create-pix", nomeCliente: "Maria Silva", valorBRL: 80, moedaEnvio: "PYG", customerCPF: "52998224725" };
+    r = await chama(pedidoAt); v = JSON.parse(r.body);
+    assert.strictEqual(r.statusCode, 202); assert.strictEqual(v.estado, "tentando"); assert.strictEqual(v.tentativa, 2); assert.ok(v.job);
+    r = await chama({ action: "tentativa-status", job: v.job }); assert.strictEqual(JSON.parse(r.body).estado, "tentando");
+    assert.strictEqual((await chama({ action: "tentativa-status", job: v.job }, {})).statusCode, 401, "acompanhar exige login");
+    passou30s(T()[0]); await pm.processarTentativa(v.job);
+    r = await chama({ action: "tentativa-status", job: v.job }); v = JSON.parse(r.body);
+    assert.strictEqual(v.estado, "ok"); assert.ok(v.resultado.qrCodeCopiaCola && v.resultado.IdTransacao === 889, "a tela recebe o mesmo resultado de antes");
+    global.__tent = []; global.__creates = 0; global.__createFalhas = 99;
+    r = await chama(pedidoAt); const jobAt = JSON.parse(r.body).job;
+    passou30s(T()[0]); await pm.processarTentativa(jobAt); passou30s(T()[0]); await pm.processarTentativa(jobAt);
+    r = await chama({ action: "tentativa-status", job: jobAt }); v = JSON.parse(r.body);
+    assert.strictEqual(v.estado, "falhou"); assert.strictEqual(v.de, 3); assert.ok(/registrado/i.test(v.ultimoErro), "mostra a resposta da PlugPay ao atendente");
+    assert.strictEqual(global.__creates, 3); assert.strictEqual(T()[0].pedido, null);
+    global.__createFalhas = 0; global.__createErro = { status: 400, message: "Valor inválido" };
+    r = await chama(pedidoAt); assert.strictEqual(r.statusCode, 400, "erro de pedido volta direto, como antes");
+    global.__createErro = null; global.__createFalhas = 0;
+    r = await chama({ action: "config" }, {}); assert.ok("adminWhatsapp" in JSON.parse(r.body));
+    console.log("ok 20: tentativas do servidor (link e atendente): 3 tentativas, 30 s, uma por chamada, cancelamento do substituído");
   }
 
 })().catch((e) => { console.error("FALHOU:", e.message); process.exit(1); });

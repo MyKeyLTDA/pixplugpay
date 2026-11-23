@@ -165,4 +165,23 @@ const tokenBloquear = (ate) =>
 const tokenSoltar = () =>
   req(tokenQ(), { method: "PATCH", body: { lock_ate: null }, headers: { Prefer: "return=minimal" } });
 
-module.exports = { listarParaPadronizar, tokenLer, tokenGarantirLinha, tokenTrava, tokenSalvar, tokenBloquear, tokenSoltar, enabled, registrar, logWebhook, inserirLogs, listarLogs, atualizarStatus, listarTransacoes, buscarTransacao, atualizarSe, criarLink, buscarLink, atualizarLinkSe, listarLinks, buscarPorIdTransacao, listarUsuarios, ambiente };
+
+// ---- Tentativas de gerar o Pix ----
+const amb = () => "&ambiente=eq." + encodeURIComponent(ambiente());
+const criarTentativa = (row) =>
+  req("plugpay_tentativas", { body: { ambiente: ambiente(), ...row }, headers: { Prefer: "return=representation" } }).then((r) => (Array.isArray(r) ? r[0] : r));
+const lerTentativa = (id) =>
+  req("plugpay_tentativas?select=*&id=eq." + Number(id) + amb() + "&limit=1", { method: "GET" }).then((r) => r[0] || null);
+const ultimaTentativaDoLink = (token) =>
+  req("plugpay_tentativas?select=*&link_token=eq." + encodeURIComponent(token) + amb() + "&order=criado_em.desc&limit=1", { method: "GET" }).then((r) => r[0] || null);
+// Atualiza só se a condição ainda valer (assim só uma chamada assume cada tentativa)
+const atualizarTentativaSe = (id, condicao, campos) =>
+  req("plugpay_tentativas?id=eq." + Number(id) + amb() + condicao,
+    { method: "PATCH", body: { ...campos, atualizado_em: new Date().toISOString() }, headers: { Prefer: "return=representation" } })
+    .then((r) => (Array.isArray(r) && r[0]) || null);
+// Tentativas paradas: esperando além da hora, ou "gerando" com a reserva vencida (chamada que morreu)
+const listarTentativasVencidas = (agoraIso, limite = 5) =>
+  req("plugpay_tentativas?select=id&or=(and(estado.eq.aguardando,proxima_em.lt." + agoraIso + "),and(estado.eq.gerando,gerando_ate.lt." + agoraIso + "))" +
+    amb() + "&order=proxima_em.asc.nullsfirst&limit=" + Number(limite), { method: "GET" });
+
+module.exports = { criarTentativa, lerTentativa, ultimaTentativaDoLink, atualizarTentativaSe, listarTentativasVencidas, listarParaPadronizar, tokenLer, tokenGarantirLinha, tokenTrava, tokenSalvar, tokenBloquear, tokenSoltar, enabled, registrar, logWebhook, inserirLogs, listarLogs, atualizarStatus, listarTransacoes, buscarTransacao, atualizarSe, criarLink, buscarLink, atualizarLinkSe, listarLinks, buscarPorIdTransacao, listarUsuarios, ambiente };

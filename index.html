@@ -471,8 +471,10 @@ $("form").addEventListener("submit", async (e) => {
   $("result").innerHTML = '<div class="placeholder">Gerando cobrança...</div>'; // não deixa o Pix anterior na tela
   $("btn").disabled = true; $("btn").textContent = "Gerando...";
   try {
-    const d = await api(body);
-    render(d);
+    let d = await api(body);
+    if (d.estado === "tentando") d = await acompanharTentativas(d); // o servidor tenta de novo sozinho; aqui só acompanhamos
+    if (d.estado === "falhou") { falhouGerar(d); return; }
+    render(d.estado === "ok" ? d.resultado : d);
     if ($("txBox").open) carregarTransacoes();
   } catch (err) {
     showError(err.message);
@@ -481,6 +483,35 @@ $("form").addEventListener("submit", async (e) => {
     $("btn").disabled = false; atualizarModo();
   }
 });
+
+// ---- Tentativas de gerar o Pix (até 3, 30 s entre elas, feitas pelo servidor) ----
+const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+async function acompanharTentativas(d) {
+  const job = d.job; let atual = d;
+  while (atual.estado === "tentando") {
+    let falta = Number(atual.segundos) || 0;
+    const pinta = () => { $("result").innerHTML = '<div class="placeholder"><strong>Tentativa ' + atual.tentativa + ' de ' + atual.de + '</strong><br>' +
+      (falta > 0 ? "A PlugPay não respondeu como esperado. O sistema tenta de novo em " + falta + " s." : "Tentando gerar o Pix agora…") + "</div>"; };
+    pinta();
+    for (let i = 0; i < 3; i++) { await esperar(1000); if (falta > 0) falta--; pinta(); }
+    atual = await api({ action: "tentativa-status", job }, false, true);
+  }
+  return atual;
+}
+function falhouGerar(d) {
+  let wa = null; try { wa = ((cfg && cfg.adminWhatsapp) || "").replace(/\D/g, ""); } catch (_) {}
+  $("result").innerHTML = "";
+  const caixa = document.createElement("div"); caixa.className = "placeholder";
+  const t = document.createElement("strong"); t.textContent = "Não foi possível gerar o Pix depois de " + (d.de || 3) + " tentativas.";
+  caixa.appendChild(t); caixa.appendChild(document.createElement("br"));
+  caixa.appendChild(document.createTextNode("Tente de novo ou chame o administrador do sistema."));
+  if (d.ultimoErro) { const m = document.createElement("div"); m.style.cssText = "margin-top:8px;font-size:12px;opacity:.8"; m.textContent = "Resposta da PlugPay: " + d.ultimoErro; caixa.appendChild(m); }
+  const bt = document.createElement("button"); bt.type = "button"; bt.className = "primary"; bt.textContent = "Tentar de novo"; bt.style.marginTop = "12px";
+  bt.onclick = () => $("form").requestSubmit();
+  caixa.appendChild(bt);
+  if (wa) { const a = document.createElement("a"); a.href = "https://wa.me/" + wa; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Chamar administrador"; a.style.cssText = "display:block;margin-top:8px"; caixa.appendChild(a); }
+  $("result").appendChild(caixa);
+}
 
 // Gera o link de pagamento e mostra no painel da direita, pronto para copiar e enviar
 // ---- Links de pagamento ----
@@ -502,7 +533,8 @@ async function carregarLinks() {
       cel(Number(l.valor_brl).toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
       cel((l.criado_por || "").split("@")[0]);
       let sit;
-      if (l.usado_em) {
+      if (l.usado_em && !l.id_transacao) sit = "Gerando o Pix (tentativas)…";
+      else if (l.usado_em) {
         const st = ST[l.status];
         sit = "Pix gerado" + (l.nome_cliente ? " — " + l.nome_cliente : "") + (st ? " (" + st[0] + ")" : "");
       } else if (new Date(l.expira_em) < new Date()) sit = "Expirado";

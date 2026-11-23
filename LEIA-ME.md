@@ -125,12 +125,16 @@ Uma função agendada (`netlify/functions/padronizar-nomes.js`, a cada 10 minuto
 - Funções agendadas só rodam no deploy publicado do Netlify. Para rodar agora: abra `/.netlify/functions/padronizar-nomes` (no máximo uma vez por minuto).
 - Rode o `supabase/schema.sql` antes de publicar (colunas `nome_informado` e `nome_manual_em`).
 
-## Retentativas ao gerar o Pix pelo link
+## Tentativas ao gerar o Pix (link do cliente e tela do atendente)
 
-Quando a PlugPay responde "CPF não registrado" (ou falha do lado dela), o servidor tenta de novo, no máximo **3 tentativas** no total, com **30 segundos** entre elas (`TENTATIVA_ESPERA_SEG` muda a espera).
+Quando a PlugPay responde "CPF não registrado" (ou falha do lado dela), o **servidor** tenta de novo: no máximo **3 tentativas** no total, **30 segundos** entre elas, cada uma numa **chamada separada** do servidor. Não depende de a página ficar aberta.
 
-- Quem faz a espera e as tentativas é o servidor, **uma tentativa por chamada**: o estado fica no link (`plugpay_links`: `tentativa`, `tentativa_estado`, `proxima_tentativa_em`, `gerando_ate`, `pendente_nome`, `pendente_cpf`). O navegador só pergunta de tempos em tempos (`link-avancar`); a chamada que chega depois dos 30 s reivindica a tentativa de forma atômica e a executa.
-- O cliente vê "Tentativa 2 de 3" com a contagem regressiva. Na 3ª falha vê "Tente de novo ou chame o atendimento", com **Tentar de novo** (nova rodada de 3) e **Chamar atendimento** (WhatsApp `wa.me/5535999018000`).
-- Erros que não adiantam repetir (pedido inválido etc.) não gastam as tentativas. Nome e CPF guardados para as tentativas são apagados do link ao terminar.
-- Antes de publicar, rode `supabase/schema.sql` (só acrescenta colunas).
-- Limitação: se o cliente fechar a página durante a espera, as tentativas param até ele reabrir o link.
+- **Quem faz o quê:** a 1ª tentativa roda na chamada do clique. Se falhar, o estado fica na tabela `plugpay_tentativas` e o servidor dispara a função em segundo plano `plugpay-tentativa-background`, que espera os 30 s e executa a próxima tentativa; ao falhar, dispara a seguinte. A função agendada `plugpay-tentativas-varredura` (a cada minuto) pega qualquer tentativa que tenha ficado parada. Cada tentativa é reivindicada de forma atômica: nunca duas ao mesmo tempo.
+- **A página só escuta:** o cliente (`link-info`) e o atendente (`tentativa-status`) apenas leem o estado a cada poucos segundos. Se fechar a página e reabrir o link, vê o resultado (QR, ou "tente de novo").
+- **Cliente:** vê "Tentativa 2 de 3" com contagem regressiva; na 3ª falha, "Tente de novo ou chame o atendimento" com **Tentar de novo** (nova rodada) e **Chamar atendimento** (`wa.me/5535999018000`).
+- **Atendente:** mesma contagem; na 3ª falha vê a resposta da PlugPay e **Tentar de novo** / **Chamar administrador** (defina `ADMIN_WHATSAPP`, só dígitos com DDI; sem ela o botão não aparece e fica a mensagem).
+- **Só falha da PlugPay e "CPF não registrado" repetem.** Pedido inválido volta direto. 429/503 continuam respeitando o `Retry-After` e não entram nas tentativas.
+- **Pix criado e resposta perdida:** todo Pix que a PlugPay criou numa tentativa é anotado. Quando uma tentativa dá certo, os Pix **anteriores** desse mesmo pedido ficam **cancelados** (status 6 + observação "Substituído por nova tentativa"). Se `PLUGPAY_CANCEL_PATH` estiver definida (rota de cancelamento da PlugPay, POST com `{IdTransacao}`), o cancelamento também é pedido a ela; sem ela, é cancelado **só aqui** e a observação diz isso.
+- **Privacidade:** nome e CPF das tentativas ficam só em `plugpay_tentativas.pedido` e são apagados quando termina (sucesso ou falha).
+- **Variáveis opcionais:** `TENTATIVA_ESPERA_SEG` (padrão 30), `ADMIN_WHATSAPP`, `PLUGPAY_CANCEL_PATH`.
+- Antes de publicar, rode `supabase/schema.sql` (só acrescenta; cria `plugpay_tentativas`). As colunas `tentativa*`/`pendente_*` que a versão anterior pôs em `plugpay_links` não são mais usadas e podem ser apagadas depois.

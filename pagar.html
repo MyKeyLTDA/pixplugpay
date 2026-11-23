@@ -140,21 +140,21 @@ function telaPix(d) {
 }
 let acompanhaT = null, contaT = null;
 function paraAcompanhamento() { clearTimeout(acompanhaT); clearInterval(contaT); acompanhaT = contaT = null; }
-// O servidor é quem espera e tenta de novo; aqui só mostramos o aviso e perguntamos, a cada poucos segundos, como está
+// As tentativas e a espera de 30 s são feitas pelo servidor, mesmo sem esta página. Aqui só escutamos o que ele responde.
 function telaTentando(d) {
   paraAcompanhamento();
   $("tentTitulo").textContent = "Tentativa " + d.tentativa + " de " + d.de;
   let falta = Number(d.segundos) || 0;
   const pinta = () => { $("tentTexto").textContent = falta > 0
-    ? "Não foi possível gerar o Pix ainda. Vamos tentar de novo em " + falta + " s. Mantenha esta página aberta."
+    ? "Não foi possível gerar o Pix ainda. O sistema vai tentar de novo em " + falta + " s. Esta página atualiza sozinha."
     : "Tentando gerar o Pix agora…"; };
   pinta(); mostrar("tentando");
   contaT = setInterval(() => { if (falta > 0) { falta--; pinta(); } }, 1000);
-  const volta = async () => {
-    try { const r = await api({ action: "link-avancar" }, true); aplicar(r); }
-    catch (err) { if (err.http === 410) return erro("Link expirado", "Peça um novo link ao atendente."); acompanhaT = setTimeout(volta, 4000); }
+  const escuta = async () => {
+    try { aplicar(await api({ action: "link-info" }, true)); }
+    catch (err) { if (err.http === 410) return erro("Link expirado", "Peça um novo link ao atendente."); acompanhaT = setTimeout(escuta, 4000); }
   };
-  acompanhaT = setTimeout(volta, 3000);
+  acompanhaT = setTimeout(escuta, 3000);
 }
 function aplicar(d) {
   if (d.estado !== "tentando") paraAcompanhamento();
@@ -182,6 +182,8 @@ async function gerar() {
   aplicar(await api({ action: "link-gerar", nome, cpf: $("cpf").value.replace(/\D/g, "") }));
 }
 $("tentarDeNovo").onclick = async () => {
+  // Página reaberta depois da falha: os campos estão vazios, volta ao formulário para o cliente preencher
+  if ($("nome").value.trim().length < 3 || !validCPF($("cpf").value)) return mostrar("dados");
   $("tentarDeNovo").disabled = true;
   try { await gerar(); } catch (err) { erro("Não foi possível continuar", err.message); }
   finally { $("tentarDeNovo").disabled = false; }

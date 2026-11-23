@@ -311,16 +311,24 @@ const LINK_VALIDADE_MIN = () => Number(process.env.LINK_VALIDADE_MIN) || 24 * 60
 // O que o cliente pode ver de um link: nunca CPF, nome de outros, documento do merchant etc.
 async function visaoDoLink(link) {
   const base = { descricao: link.descricao, valorBRL: Number(link.valor_brl), expirado: new Date(link.expira_em) < new Date() };
-  if (!link.id_transacao) {
-    // Retentativas em andamento (feitas pelo servidor, uma por chamada): o cliente só acompanha
-    if (link.tentativa_estado === "aguardando" || link.tentativa_estado === "gerando") {
-      const espera = link.tentativa_estado === "aguardando" ? Math.max(0, Math.ceil((new Date(link.proxima_tentativa_em) - Date.now()) / 1000)) : 0;
-      return { ...base, estado: "tentando", tentativa: Number(link.tentativa || 0) + (link.tentativa_estado === "aguardando" ? 1 : 0), de: TENTATIVAS_MAX, segundos: espera };
-    }
-    return { ...base, estado: "aguardando" };
+  let idTransacao = link.id_transacao;
+  if (!idTransacao && db.enabled()) {
+    // Tentativas feitas pelo servidor: a página só acompanha o estado (não precisa fazer nada para elas andarem)
+    const j = await db.ultimaTentativaDoLink(link.token).catch(() => null);
+    if (j && (j.estado === "aguardando" || j.estado === "gerando")) return { ...base, ...viewTentando(j) };
+    if (j && j.estado === "falhou" && !link.usado_em) return { ...base, estado: "falhou", de: TENTATIVAS_MAX };
+    if (j && j.estado === "ok" && j.id_transacao) idTransacao = j.id_transacao;
   }
-  const t = await db.buscarPorIdTransacao(link.id_transacao);
+  if (!idTransacao) return { ...base, estado: "aguardando" };
+  const t = await db.buscarPorIdTransacao(idTransacao);
   return { ...base, estado: "gerada", status: t ? t.status : 5, qrCopiaCola: t ? t.qr_copia_cola : null, valorBRL: t && t.valor_brl ? Number(t.valor_brl) : base.valorBRL };
+}
+
+// O que mostrar enquanto as tentativas correm: qual tentativa vem a seguir e quantos segundos faltam
+function viewTentando(j) {
+  const aguardando = j.estado === "aguardando";
+  return { estado: "tentando", tentativa: Number(j.tentativa || 0) + (aguardando ? 1 : 0), de: TENTATIVAS_MAX,
+    segundos: aguardando ? Math.max(0, Math.ceil((new Date(j.proxima_em) - Date.now()) / 1000)) : 0 };
 }
 
 const LINK_ERRO_GENERICO = "Não foi possível gerar o Pix agora. Tente de novo em instantes ou fale com o atendente.";
@@ -335,8 +343,6 @@ async function tratarLinkPublico(req, merchant) {
 
   if (req.action === "link-info") return json(200, await visaoDoLink(link));
 
-  if (req.action === "link-avancar") return avancarLink(link, token, merchant);
-
   // link-gerar
   const nome = String(req.nome || "").trim().slice(0, 100);
   if (nome.length < 3) return json(400, { error: "Informe seu nome completo." });
@@ -344,80 +350,172 @@ async function tratarLinkPublico(req, merchant) {
   if (link.id_transacao) return json(200, await visaoDoLink(link)); // já gerado: mostra o mesmo Pix
   if (new Date(link.expira_em) < new Date()) return json(410, { error: "Este link expirou. Peça um novo ao atendente." });
 
-  // Reserva o link de forma atômica: dois cliques ao mesmo tempo não geram dois Pix.
-  // Já guarda nome e CPF no servidor: as retentativas não dependem do navegador do cliente.
-  const reservado = await db.atualizarLinkSe(token, "&usado_em=is.null", {
-    usado_em: new Date().toISOString(), tentativa: 1, tentativa_estado: "gerando", gerando_ate: new Date(Date.now() + LEASE_MS).toISOString(),
-    proxima_tentativa_em: null, pendente_nome: nome, pendente_cpf: onlyDigits(req.cpf),
-  });
+  // Reserva o link de forma atômica: dois cliques ao mesmo tempo não geram dois Pix
+  const reservado = await db.atualizarLinkSe(token, "&usado_em=is.null", { usado_em: new Date().toISOString() });
   if (!reservado) {
     const atual = await db.buscarLink(token);
     return json(200, await visaoDoLink(atual || link));
   }
-  return concluirTentativa(link, token, 1, await tentarGerar(link, token, merchant, nome, onlyDigits(req.cpf)));
+  let job;
+  try {
+    job = await db.criarTentativa({ tipo: "link", link_token: token, usuario: "cliente (link)", tentativa: 1, estado: "gerando",
+      gerando_ate: new Date(Date.now() + LEASE_MS).toISOString(),
+      pedido: { cpf: onlyDigits(req.cpf), nome, valorBRL: Number(link.valor_brl), moedaEnvio: link.moeda_envio, descricao: link.descricao, criadoPor: link.criado_por } });
+  } catch (err) {
+    await db.atualizarLinkSe(token, "", { usado_em: null }).catch(() => {});
+    console.error("link-gerar:", err.message);
+    return json(502, { error: LINK_ERRO_GENERICO });
+  }
+  const r = await finalizarTentativa(job, 1, await tentarGerar(job, merchant));
+  if (r.tipo === "ok") return json(200, { ...base_vazio(), estado: "gerada", status: 5, qrCopiaCola: r.resultado.qrCodeCopiaCola || null, valorBRL: Number(r.resultado.valueBRL) || Number(link.valor_brl), descricao: link.descricao });
+  if (r.tipo === "tentando") return json(200, { ...base_vazio(), descricao: link.descricao, valorBRL: Number(link.valor_brl), ...viewTentando(r.job) });
+  if (r.tipo === "falhou") return json(200, { ...base_vazio(), descricao: link.descricao, valorBRL: Number(link.valor_brl), estado: "falhou", de: TENTATIVAS_MAX });
+  return r.fatal.pronta || json(502, { error: LINK_ERRO_GENERICO });
 }
 
+// ---------------------------------------------------------------------------------------------
+// Tentativas de gerar o Pix: até 3, 30 s entre elas. O servidor anda sozinho: cada tentativa roda numa
+// chamada própria (função em segundo plano, com a varredura de 1 min como rede de segurança).
+// Quem usa a tela só acompanha o estado.
 const TENTATIVAS_MAX = 3;
 const ESPERA_MS = () => (Number(process.env.TENTATIVA_ESPERA_SEG) || 30) * 1000;
-const LEASE_MS = 90 * 1000; // se a chamada morrer no meio, outra assume depois disso
+const LEASE_MS = 90 * 1000;
 
-// Erros que valem nova tentativa: falha do servidor da PlugPay e o "CPF não registrado" (o suporte deles só manda tentar de novo)
+// Vale nova tentativa: falha do servidor da PlugPay e o "CPF não registrado" (o suporte deles só manda tentar de novo)
 const retentavel = (erro) => erro.status >= 500 || (erro.status === 422 && /registrado/i.test(String((erro.body && erro.body.message) || "")));
 
-const LIMPA_TENTATIVA = { usado_em: null, tentativa: 0, tentativa_estado: null, proxima_tentativa_em: null, gerando_ate: null, pendente_nome: null, pendente_cpf: null };
-
-// Uma tentativa de gerar o Pix. Devolve { ok: resposta } | { retentar: true } | { fatal: resposta }
-async function tentarGerar(link, token, merchant, nome, cpf) {
+// Uma tentativa. Devolve { ok: resultado } | { retentar: true, motivo } | { fatal: { status, body } }
+async function tentarGerar(job, merchant) {
+  const p = job.pedido || {};
+  ctx.usuario = ctx.usuario || job.usuario;
   try {
-    const e = await emitirPix({ customerCPF: cpf, valorBRL: Number(link.valor_brl), moedaEnvio: link.moeda_envio }, merchant);
+    const e = await emitirPix(job.tipo === "link"
+      ? { customerCPF: p.cpf, valorBRL: p.valorBRL, moedaEnvio: p.moedaEnvio }
+      : p.req, merchant);
     if (e.erro) {
-      console.error("link-gerar recusado:", JSON.stringify(e.erro.body).slice(0, 300));
-      return retentavel(e.erro) ? { retentar: true } : { fatal: json(502, { error: LINK_ERRO_GENERICO }) };
+      console.error("tentativa", job.id, "recusada:", JSON.stringify(e.erro.body).slice(0, 300));
+      if (retentavel(e.erro)) return { retentar: true, motivo: String((e.erro.body && e.erro.body.message) || "").slice(0, 300) };
+      return { fatal: job.tipo === "link" ? { status: 502, body: { error: LINK_ERRO_GENERICO } } : e.erro };
     }
-    await guardarCobranca("PIX", {
-      moeda: e.moeda, valor: e.value, documentMerchant: merchant, cpfCliente: e.cpf, nomeCliente: nome,
-      descricao: link.descricao, criadoPor: link.criado_por,
-    }, e.r.data);
-    const limpa = { tentativa_estado: null, proxima_tentativa_em: null, gerando_ate: null, pendente_nome: null, pendente_cpf: null };
-    if (e.r.data && e.r.data.IdTransacao) await db.atualizarLinkSe(token, "", { id_transacao: e.r.data.IdTransacao, ...limpa }).catch((err) => console.error("link:", err.message));
-    return { ok: json(200, { ...base_vazio(), estado: "gerada", status: 5, qrCopiaCola: e.r.data.qrCodeCopiaCola || null, valorBRL: Number(e.r.data.valueBRL) || Number(link.valor_brl), descricao: link.descricao }) };
+    // Anota já o Pix que a PlugPay criou: se algo falhar daqui em diante e vier outra tentativa, este será cancelado
+    const idNovo = e.r.data && e.r.data.IdTransacao;
+    if (idNovo) {
+      job.transacoes = [...(job.transacoes || []), idNovo];
+      await db.atualizarTentativaSe(job.id, "", { transacoes: job.transacoes }).catch(() => {});
+    }
+    await guardarCobranca("PIX", job.tipo === "link"
+      ? { moeda: e.moeda, valor: e.value, documentMerchant: merchant, cpfCliente: e.cpf, nomeCliente: p.nome, descricao: p.descricao, criadoPor: p.criadoPor }
+      : { moeda: e.moeda, valor: e.value, documentMerchant: merchant, referenciaExterna: p.req.referenciaExterna, cpfCliente: e.cpf,
+          nomeCliente: String(p.req.nomeCliente || "").trim().slice(0, 100) || null, criadoPor: job.usuario }, e.r.data);
+    return { ok: { ...e.r.data, conversao: e.conversao }, idNovo };
   } catch (err) {
-    console.error("link-gerar:", err.message);
-    return { retentar: true }; // rede, token ou limite: também vale tentar de novo
+    console.error("tentativa", job.id, ":", err.message);
+    if (err && (err.status === 429 || err.status === 503)) { // limite da PlugPay: respeita o Retry-After e devolve como antes (não é caso de repetir já)
+      const pronta = respostaDeErro(err);
+      if (job.tipo === "link") pronta.body = JSON.stringify({ error: "Muitas solicitações no momento. Aguarde alguns segundos e tente de novo." });
+      return { fatal: { status: err.status, body: { error: err.message }, pronta } };
+    }
+    return { retentar: true, motivo: String(err.message || "").slice(0, 300) }; // rede, token ou limite: também vale tentar de novo
   }
 }
 
-// Depois de uma tentativa: sucesso, agenda a próxima (30 s depois, em outra chamada) ou desiste na 3ª
-async function concluirTentativa(link, token, numero, r) {
-  if (r.ok) return r.ok;
-  if (r.fatal) { await db.atualizarLinkSe(token, "", LIMPA_TENTATIVA).catch(() => {}); return r.fatal; }
-  if (numero < TENTATIVAS_MAX) {
-    const proxima = new Date(Date.now() + ESPERA_MS()).toISOString();
-    await db.atualizarLinkSe(token, "", { tentativa: numero, tentativa_estado: "aguardando", proxima_tentativa_em: proxima, gerando_ate: null });
-    return json(200, { ...base_vazio(), descricao: link.descricao, valorBRL: Number(link.valor_brl), estado: "tentando", tentativa: numero + 1, de: TENTATIVAS_MAX, segundos: Math.ceil(ESPERA_MS() / 1000) });
+// Depois de uma tentativa: conclui, agenda a próxima ou desiste na 3ª.
+// Devolve { tipo: "ok" | "tentando" | "falhou" | "fatal", ... } para quem está esperando a resposta.
+async function finalizarTentativa(job, numero, r) {
+  const limpar = { pedido: null, proxima_em: null, gerando_ate: null };
+  if (r.ok) {
+    const idFinal = r.idNovo || null;
+    await db.atualizarTentativaSe(job.id, "", { ...limpar, estado: "ok", tentativa: numero, id_transacao: idFinal, resultado: job.tipo === "atendente" ? r.ok : null, ultimo_erro: null });
+    if (job.tipo === "link" && idFinal) await db.atualizarLinkSe(job.link_token, "", { id_transacao: idFinal }).catch((err) => console.error("link:", err.message));
+    await cancelarSubstituidas(job, idFinal);
+    return { tipo: "ok", resultado: r.ok };
   }
-  await db.atualizarLinkSe(token, "", LIMPA_TENTATIVA).catch(() => {}); // libera o link para "Tentar de novo"
-  return json(200, { ...base_vazio(), descricao: link.descricao, valorBRL: Number(link.valor_brl), estado: "falhou", de: TENTATIVAS_MAX });
+  const desistir = async (erro) => {
+    await db.atualizarTentativaSe(job.id, "", { ...limpar, estado: "falhou", tentativa: numero, ultimo_erro: erro });
+    if (job.tipo === "link") await db.atualizarLinkSe(job.link_token, "", { usado_em: null }).catch(() => {}); // libera para "Tentar de novo"
+  };
+  if (r.fatal) { await desistir(String((r.fatal.body && (r.fatal.body.message || r.fatal.body.error)) || "").slice(0, 300)); return { tipo: "fatal", fatal: r.fatal }; }
+  if (numero >= TENTATIVAS_MAX) { await desistir(r.motivo || null); return { tipo: "falhou", ultimoErro: r.motivo || null }; }
+  const proxima = new Date(Date.now() + ESPERA_MS()).toISOString();
+  const novo = await db.atualizarTentativaSe(job.id, "", { tentativa: numero, estado: "aguardando", proxima_em: proxima, gerando_ate: null, ultimo_erro: r.motivo || null });
+  await despachar(job.id);
+  return { tipo: "tentando", job: novo || { ...job, tentativa: numero, estado: "aguardando", proxima_em: proxima } };
 }
 
-// Chamada de acompanhamento feita pela página: se já passou a espera, ESTA chamada executa a próxima tentativa
-async function avancarLink(link, token, merchant) {
-  if (link.id_transacao || !(link.tentativa_estado === "aguardando" || link.tentativa_estado === "gerando")) return json(200, await visaoDoLink(link));
-  if (new Date(link.expira_em) < new Date()) { await db.atualizarLinkSe(token, "", LIMPA_TENTATIVA).catch(() => {}); return json(410, { error: "Este link expirou. Peça um novo ao atendente." }); }
-  const agora = new Date().toISOString();
-  const numero = Number(link.tentativa || 0) + 1;
-  if (numero > TENTATIVAS_MAX) { // chamada anterior morreu na última tentativa
-    if (link.tentativa_estado === "gerando" && new Date(link.gerando_ate) > new Date()) return json(200, await visaoDoLink(link));
-    return concluirTentativa(link, token, TENTATIVAS_MAX, { retentar: true });
+// Um Pix que a PlugPay criou numa tentativa anterior e foi substituído: fica cancelado para nós.
+// Só pedimos o cancelamento à PlugPay se houver rota configurada (PLUGPAY_CANCEL_PATH); senão é só local.
+async function cancelarSubstituidas(job, idFinal) {
+  for (const id of (job.transacoes || []).filter((x) => x && x !== idFinal)) {
+    let naPlug = false;
+    if (process.env.PLUGPAY_CANCEL_PATH) {
+      try { naPlug = (await call(process.env.PLUGPAY_CANCEL_PATH, { method: "POST", body: { IdTransacao: id } })).ok; } catch (e) { console.error("cancelar na PlugPay:", e.message); }
+    }
+    try {
+      const t = await db.buscarPorIdTransacao(id);
+      if (t && t.status === 5) {
+        await db.atualizarSe(t.id, "", { status: 6, status_descricao: "CANCELADO",
+          observacoes: ((t.observacoes ? t.observacoes + " | " : "") + "Substituído por nova tentativa" + (naPlug ? "" : " (cancelado só aqui; a PlugPay não foi avisada)")).slice(0, 300) });
+      }
+    } catch (e) { console.error("cancelar localmente:", e.message); }
   }
-  // Reivindica a tentativa de forma atômica: só uma chamada executa cada vez
-  const cond = "&id_transacao=is.null&tentativa=eq." + Number(link.tentativa || 0) +
-    "&or=(and(tentativa_estado.eq.aguardando,proxima_tentativa_em.lte." + agora + "),and(tentativa_estado.eq.gerando,gerando_ate.lt." + agora + "))";
-  const c = await db.atualizarLinkSe(token, cond, { tentativa: numero, tentativa_estado: "gerando", gerando_ate: new Date(Date.now() + LEASE_MS).toISOString() });
-  if (!c) { const atual = await db.buscarLink(token); return json(200, await visaoDoLink(atual || link)); } // ainda esperando (ou outra chamada pegou)
-  ctx.acao = "link-gerar";
-  return concluirTentativa(c, token, numero, await tentarGerar(c, token, merchant, c.pendente_nome, c.pendente_cpf));
 }
+
+const segredoInterno = () => crypto.createHash("sha256").update("tentativa:" + (process.env.SUPABASE_SERVICE_KEY || process.env.PLUGPAY_PASSWORD || "")).digest("hex");
+
+// Chama a função em segundo plano que espera os 30 s e executa a próxima tentativa (em outra chamada)
+async function despachar(id) {
+  const base = (process.env.URL || process.env.DEPLOY_PRIME_URL || "").replace(/\/$/, "");
+  if (!base) return;
+  try {
+    await fetch(base + "/.netlify/functions/plugpay-tentativa-background", {
+      method: "POST", headers: { "Content-Type": "application/json", "x-interno": segredoInterno() }, body: JSON.stringify({ id }),
+    });
+  } catch (e) { console.error("despachar tentativa:", e.message); } // a varredura de 1 min cobre
+}
+
+// Executa a próxima tentativa de um job, se já for a hora. Seguro para ser chamado por várias origens ao mesmo tempo.
+async function processarTentativa(id) {
+  ctx = { id: crypto.randomBytes(4).toString("hex"), acao: "tentativa", usuario: null, logs: [] };
+  try {
+    const job = await db.lerTentativa(id);
+    if (!job || !(job.estado === "aguardando" || job.estado === "gerando")) return { estado: job && job.estado };
+    ctx.usuario = job.usuario;
+    const numero = Number(job.tentativa || 0) + 1;
+    const agora = new Date().toISOString();
+    if (numero > TENTATIVAS_MAX) { // a chamada da última tentativa morreu
+      if (job.estado === "gerando" && new Date(job.gerando_ate) > new Date()) return { estado: "gerando" };
+      return finalizarTentativa(job, TENTATIVAS_MAX, { retentar: true, motivo: job.ultimo_erro });
+    }
+    const cond = "&tentativa=eq." + Number(job.tentativa || 0) +
+      "&or=(and(estado.eq.aguardando,proxima_em.lte." + agora + "),and(estado.eq.gerando,gerando_ate.lt." + agora + "))";
+    const meu = await db.atualizarTentativaSe(id, cond, { tentativa: numero, estado: "gerando", gerando_ate: new Date(Date.now() + LEASE_MS).toISOString() });
+    if (!meu) return { estado: job.estado }; // ainda não é a hora, ou outra chamada já pegou
+    return await finalizarTentativa(meu, numero, await tentarGerar(meu, process.env.PLUGPAY_MERCHANT_DOC));
+  } finally {
+    if (db.enabled() && ctx.logs.length) { try { await db.inserirLogs(ctx.logs); } catch (e) { console.error("Falha ao gravar log:", e.message); } }
+  }
+}
+
+// Função em segundo plano: espera até a hora marcada (no máximo ~1 min) e executa a tentativa
+async function processarTentativaAgendada(id) {
+  const job = await db.lerTentativa(id);
+  if (!job || job.estado !== "aguardando") return;
+  const falta = Math.min(new Date(job.proxima_em) - Date.now(), 65000);
+  if (falta > 0) await new Promise((r) => setTimeout(r, falta + 200));
+  return processarTentativa(id);
+}
+
+// Varredura (a cada minuto): pega tentativas paradas, como rede de segurança
+async function varrerTentativas(orcamentoMs = 20000) {
+  const t0 = Date.now(); const feitas = [];
+  const vencidas = await db.listarTentativasVencidas(new Date(Date.now() - 8000).toISOString(), 5);
+  for (const v of vencidas) {
+    if (Date.now() - t0 > orcamentoMs) break;
+    await processarTentativa(v.id); feitas.push(v.id);
+  }
+  return feitas;
+}
+
 const base_vazio = () => ({ expirado: false });
 
 async function tratar(event) {
@@ -431,12 +529,12 @@ async function tratar(event) {
   if (req.action === "config") {
     const c = auth.configPublica();
     if (!c.supabaseUrl || !c.supabaseKey) return json(500, { error: "SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY não configurados no Netlify" });
-    return json(200, c);
+    return json(200, { ...c, adminWhatsapp: onlyDigits(process.env.ADMIN_WHATSAPP) || null });
   }
 
   // Ações do cliente com link de pagamento: sem login, protegidas pelo token do link
-  if (req.action === "link-info" || req.action === "link-gerar" || req.action === "link-avancar") {
-    if (req.action !== "link-info") ctx.usuario = "cliente (link)";
+  if (req.action === "link-info" || req.action === "link-gerar") {
+    if (req.action === "link-gerar") ctx.usuario = "cliente (link)";
     return tratarLinkPublico(req, process.env.PLUGPAY_MERCHANT_DOC);
   }
 
@@ -457,13 +555,30 @@ async function tratar(event) {
     }
 
     case "create-pix": {
-      const e = await emitirPix(req, merchant);
-      if (e.erro) return json(e.erro.status, e.erro.body);
-      await guardarCobranca("PIX", {
-        moeda: e.moeda, valor: e.value, documentMerchant: merchant, referenciaExterna: req.referenciaExterna, cpfCliente: e.cpf,
-        nomeCliente: String(req.nomeCliente || "").trim().slice(0, 100) || null,
-      }, e.r.data);
-      return json(200, { ...e.r.data, conversao: e.conversao });
+      if (!db.enabled()) { // sem banco não há onde guardar as tentativas: comportamento simples
+        const e = await emitirPix(req, merchant);
+        if (e.erro) return json(e.erro.status, e.erro.body);
+        await guardarCobranca("PIX", { moeda: e.moeda, valor: e.value, documentMerchant: merchant, referenciaExterna: req.referenciaExterna, cpfCliente: e.cpf,
+          nomeCliente: String(req.nomeCliente || "").trim().slice(0, 100) || null }, e.r.data);
+        return json(200, { ...e.r.data, conversao: e.conversao });
+      }
+      const { action, ...pedidoReq } = req;
+      const job = await db.criarTentativa({ tipo: "atendente", usuario: ctx.usuario, tentativa: 1, estado: "gerando",
+        gerando_ate: new Date(Date.now() + LEASE_MS).toISOString(), pedido: { req: { ...pedidoReq, documentMerchant: merchant } } });
+      const r = await finalizarTentativa(job, 1, await tentarGerar(job, merchant));
+      if (r.tipo === "ok") return json(200, r.resultado);
+      if (r.tipo === "fatal") return r.fatal.pronta || json(r.fatal.status, r.fatal.body);
+      if (r.tipo === "tentando") return json(202, { ...viewTentando(r.job), job: job.id });
+      return json(200, { estado: "falhou", de: TENTATIVAS_MAX, ultimoErro: r.ultimoErro, job: job.id });
+    }
+
+    // A tela do atendente acompanha as tentativas (só leitura; quem as executa é o servidor)
+    case "tentativa-status": {
+      const j = await db.lerTentativa(req.job);
+      if (!j || j.tipo !== "atendente") return json(404, { error: "Tentativa não encontrada." });
+      if (j.estado === "ok") return json(200, { estado: "ok", resultado: j.resultado });
+      if (j.estado === "falhou") return json(200, { estado: "falhou", de: TENTATIVAS_MAX, ultimoErro: j.ultimo_erro });
+      return json(200, viewTentando(j));
     }
 
     case "link-criar": {
@@ -599,6 +714,11 @@ async function tratar(event) {
   }
 }
 
+exports.processarTentativa = (...a) => processarTentativa(...a);
+exports.processarTentativaAgendada = (...a) => processarTentativaAgendada(...a);
+exports.varrerTentativas = (...a) => varrerTentativas(...a);
+exports.segredoInterno = () => segredoInterno();
+
 exports.handler = async (event) => {
   ctx = { id: crypto.randomBytes(4).toString("hex"), acao: null, usuario: null, logs: [] };
   const t0 = Date.now();
@@ -610,7 +730,7 @@ exports.handler = async (event) => {
   }
 
   // Resumo da requisição inteira (o que a tela pediu e o que devolvemos)
-  if (ctx.acao && ctx.usuario && !["logs", "transacoes", "transacao-qr", "config", "link-info", "link-listar", "usuarios"].includes(ctx.acao)) {
+  if (ctx.acao && ctx.usuario && !["logs", "transacoes", "transacao-qr", "config", "link-info", "link-listar", "usuarios", "tentativa-status"].includes(ctx.acao)) {
     let corpo; try { corpo = JSON.parse(resp.body); } catch { corpo = null; }
     let pedido; try { pedido = JSON.parse(event.body || "{}"); } catch { pedido = null; }
     addLog({

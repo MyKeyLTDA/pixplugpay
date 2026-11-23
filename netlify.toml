@@ -11,3 +11,6 @@
 # Rotina automática: padroniza o nome do cliente por CPF a cada 10 minutos (funções agendadas só rodam no deploy publicado)
 [functions."padronizar-nomes"]
   schedule = "*/10 * * * *"
+
+[functions."plugpay-tentativas-varredura"]
+  schedule = "* * * * *"
