@@ -835,7 +835,7 @@ async function carregarLogs() {
     body.innerHTML = "";
     (d.logs || []).forEach(l => {
       const tr = document.createElement("tr"); tr.className = "row";
-      const cel = (t, cls) => { const td = document.createElement("td"); td.textContent = t ?? ""; if (cls) td.className = cls; tr.appendChild(td); };
+      const cel = (t, cls) => { const td = document.createElement("td"); td.textContent = t ?? ""; if (cls) td.className = cls; tr.appendChild(td); return td; };
       cel(new Date(l.criado_em).toLocaleString("pt-BR"));
       cel(l.acao);
       const tdR = cel((l.metodo || "") + " " + (l.endpoint || "")); tdR.title = l.rota || "";
