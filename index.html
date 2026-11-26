@@ -139,6 +139,20 @@
   #txTabela td.valor, #txTabela th.valor { text-align:right; font-variant-numeric:tabular-nums; }
   #txTabela td.obs, #txTabela td.cp.obs { white-space:normal; min-width:140px; }
   #txTabela .badge { margin:0; padding:2px 10px; font-size:12px; }
+
+  /* Largura total da tela e linhas compactas (pedido da Andreia): tudo visível sem rolar para o lado */
+  #txSec { grid-column:1 / -1; width:min(97vw, 2400px); justify-self:center; box-sizing:border-box; }
+  #txTabela { table-layout:fixed; width:auto; }
+  #txTabela td, #txTabela td.cp.obs, #txTabela td.cp.nome { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:none; min-width:0; padding:3px 8px; height:26px; font-size:13px; }
+  #txTabela td:has(.edita) { overflow:visible; }
+  #txTabela td.cp .edita { min-width:0; }
+  #txTabela td.cp button.mini, #txTabela td.cp button.edit { padding:0 2px; font-size:12px; }
+  #txTabela th { position:sticky; padding:5px 8px; overflow:hidden; text-overflow:ellipsis; }
+  #txTabela th .rz { position:absolute; top:0; right:0; width:7px; height:100%; cursor:col-resize; z-index:4; }
+  #txTabela th .rz:hover, #txTabela th .rz.ativo { background:var(--pl-selborda); opacity:.55; }
+  #txTabela button.link { padding:0 4px; margin:0; font-size:12px; }
+  #txTabela .acoes { display:flex; gap:8px; align-items:center; white-space:nowrap; }
+  body.redimensionando { cursor:col-resize; user-select:none; }
 </style>
 
 </head>
@@ -241,7 +255,7 @@
   <section class="card result" id="result">
     <div class="placeholder">O QR Code e o copia e cola aparecem aqui.</div>
   </section>
-  <section class="card logs">
+  <section class="card logs" id="txSec">
     <details id="txBox" open>
       <summary>Transações</summary>
       <div class="tools">
@@ -275,6 +289,7 @@
       <div class="sub" id="txInfo" style="margin-top:8px"></div>
       <div class="planilha">
       <table id="txTabela">
+        <colgroup id="txCols"></colgroup>
         <thead><tr><th class="nl"></th><th data-col="data">Data<span class="seta"></span></th><th data-col="pedido">Nº pedido<span class="seta"></span></th><th data-col="nota">Nota fiscal<span class="seta"></span></th><th data-col="cliente">Cliente<span class="seta"></span></th><th data-col="cpf">CPF<span class="seta"></span></th><th data-col="obs">Observações<span class="seta"></span></th><th data-col="usuario">Emitido por<span class="seta"></span></th><th data-col="valor" class="valor">Valor<span class="seta"></span></th><th data-col="status">Status<span class="seta"></span></th><th data-col="plug">Pago pela Plug<span class="seta"></span></th><th></th></tr><tr class="filtros"><th class="nl"></th><th><input data-filtro="data" placeholder="filtrar" aria-label="Filtrar Data"></th><th><input data-filtro="pedido" placeholder="filtrar" aria-label="Filtrar Nº pedido"></th><th><input data-filtro="nota" placeholder="filtrar" aria-label="Filtrar Nota fiscal"></th><th><input data-filtro="cliente" placeholder="filtrar" aria-label="Filtrar Cliente"></th><th><input data-filtro="cpf" placeholder="filtrar" aria-label="Filtrar CPF"></th><th><input data-filtro="obs" placeholder="filtrar" aria-label="Filtrar Observações"></th><th><input data-filtro="usuario" placeholder="filtrar" aria-label="Filtrar Emitido por"></th><th><input data-filtro="valor" placeholder="filtrar" aria-label="Filtrar Valor"></th><th><input data-filtro="status" placeholder="filtrar" aria-label="Filtrar Status"></th><th><input data-filtro="plug" placeholder="filtrar" aria-label="Filtrar Pago pela Plug"></th><th><button type="button" class="link" id="txLimparFiltrosCol" style="margin:0">limpar filtros</button></th></tr></thead>
         <tbody id="txBody"></tbody>
       </table>
@@ -762,8 +777,7 @@ function desenharTransacoes() {
     if (t.nome_informado) tdNome.title = "Informado pelo cliente: " + t.nome_informado;
     copiavel(cel(""), t.cpf_cliente, fmtCPF);
     celulaEditavel(cel(""), t, { campo: "observacoes", chave: "observacoes", max: 200, placeholder: "Observação curta", classe: "obs" });
-    const tdU = cel(nomeCurto(t.criado_por)); tdU.title = t.criado_por || "";
-    if (t.descricao) { const d = document.createElement("div"); d.className = "sub"; d.textContent = t.descricao; tdU.appendChild(d); }
+    const tdU = cel(nomeCurto(t.criado_por)); tdU.title = (t.criado_por || "") + (t.descricao ? " — " + t.descricao : "");
     cel(t.valor_brl ? brl(t.valor_brl) : "—").className = "valor";
     const tdSt = cel(""); const st = situacao(t);
     const b = document.createElement("span"); b.className = "badge " + st[1]; b.style.margin = "0"; b.textContent = st[0]; tdSt.appendChild(b);
@@ -789,6 +803,37 @@ async function carregarTransacoes() {
     desenharTransacoes();
   } catch (e) { info.textContent = e.message; }
 }
+// @problema: trecho de código escrito por modelo de linguagem
+// Largura das colunas: arrastar a borda direita do título (cursor de redimensionar); fica salva neste navegador
+const LARG_PADRAO = [38, 105, 95, 95, 205, 135, 140, 85, 95, 105, 105, 145];
+let largTx = LARG_PADRAO.slice();
+try { const salvo = JSON.parse(localStorage.getItem("pp_tx_larg") || "null"); if (Array.isArray(salvo) && salvo.length === LARG_PADRAO.length) largTx = salvo.map((n, i) => Math.max(40, Number(n) || LARG_PADRAO[i])); } catch (_) {}
+function aplicarLarguras() {
+  const cg = $("txCols");
+  if (!cg.children.length) largTx.forEach(() => cg.appendChild(document.createElement("col")));
+  largTx.forEach((w, i) => { cg.children[i].style.width = w + "px"; });
+  $("txTabela").style.width = largTx.reduce((a, n) => a + n, 0) + "px";
+}
+function ligarRedimensionar() {
+  const ths = document.querySelectorAll("#txTabela thead tr:first-child th");
+  ths.forEach((th, i) => {
+    if (i === 0) return; // coluna do nº da linha: fixa
+    const rz = document.createElement("span"); rz.className = "rz"; rz.title = "Arraste para ajustar a largura (duplo clique: padrão)";
+    th.appendChild(rz);
+    rz.addEventListener("click", (e) => e.stopPropagation());
+    rz.addEventListener("dblclick", (e) => { e.stopPropagation(); largTx[i] = LARG_PADRAO[i]; aplicarLarguras(); salvarLarg(); });
+    rz.addEventListener("mousedown", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const x0 = e.clientX, w0 = largTx[i];
+      rz.classList.add("ativo"); document.body.classList.add("redimensionando");
+      const mexe = (ev) => { largTx[i] = Math.max(40, Math.round(w0 + ev.clientX - x0)); aplicarLarguras(); };
+      const solta = () => { document.removeEventListener("mousemove", mexe); document.removeEventListener("mouseup", solta); rz.classList.remove("ativo"); document.body.classList.remove("redimensionando"); salvarLarg(); };
+      document.addEventListener("mousemove", mexe); document.addEventListener("mouseup", solta);
+    });
+  });
+}
+function salvarLarg() { try { localStorage.setItem("pp_tx_larg", JSON.stringify(largTx)); } catch (_) {} }
+aplicarLarguras(); ligarRedimensionar();
 document.querySelectorAll("#txTabela th[data-col]").forEach((th) => th.addEventListener("click", () => {
   const c = th.dataset.col;
   ordTx = ordTx.col === c ? (ordTx.dir === 1 ? { col: c, dir: -1 } : { col: null, dir: 1 }) : { col: c, dir: 1 };
