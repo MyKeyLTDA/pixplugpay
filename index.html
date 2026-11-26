@@ -35,6 +35,7 @@
   .badge.pend { background:#fff3e0; color:#b85c00; }
   .badge.ok { background:#e6f4ea; color:var(--ok); }
   .badge.bad { background:#fdecea; color:var(--err); }
+  .badge.nc { background:#eceff3; color:#5a6472; }
   .amount { font-size:22px; font-weight:700; color:var(--navy); }
   .sub { font-size:13px; color:#6b7686; }
   textarea { width:100%; height:92px; margin-top:10px; padding:8px; font-family:Consolas, monospace; font-size:12px; border:1px solid #cdd5e0; border-radius:6px; resize:none; }
@@ -226,11 +227,11 @@
       <div class="tools">
         <select id="txStatus" style="width:auto">
           <option value="">Todos os status</option>
-          <option value="5">Pendentes</option>
+          <option value="5">Pendentes (até 3 h)</option>
+          <option value="nao_concluida">Não concluídas</option>
           <option value="1">Aprovadas</option>
           <option value="3">Rejeitadas</option>
           <option value="6">Canceladas</option>
-          <option value="9">Estornadas</option>
         </select>
         <select id="txUsuario" style="width:auto"><option value="">Todos os usuários</option></select>
         <select id="txNF" style="width:auto">
@@ -238,13 +239,13 @@
           <option value="vazias">Sem nota fiscal</option>
           <option value="preenchidas">Com nota fiscal</option>
         </select>
-        <span class="periodo"><label for="txDe" style="margin:0;font-weight:400">De</label><input type="date" id="txDe"><label for="txAte" style="margin:0;font-weight:400">até</label><input type="date" id="txAte"><button type="button" class="link" id="txLimparDatas" style="margin:0">limpar</button></span>
+        <span class="periodo"><label for="txDe" style="margin:0;font-weight:400">De</label><input type="date" id="txDe"><label for="txAte" style="margin:0;font-weight:400">até</label><input type="date" id="txAte"><button type="button" class="link" id="txLimparDatas" style="margin:0">limpar datas</button></span>
         <select id="txPlug" style="width:auto">
           <option value="">Pago pela Plug: todos</option>
           <option value="sem_data">Sem data (não repassado)</option>
           <option value="com_data">Com data</option>
         </select>
-        <input id="txBusca" placeholder="Buscar nome, CPF, pedido ou nota fiscal" style="width:370px;max-width:100%">
+        <input id="txBusca" placeholder="Buscar nome, CPF, pedido ou nota fiscal" style="width:370px;max-width:100%"><button type="button" class="link" id="txLimparBusca" style="margin:0 8px">limpar busca</button>
         <button type="button" class="link" id="txRefresh">Atualizar</button>
         <button type="button" class="link" id="txVerificar">Verificar pendentes</button>
         <button type="button" class="link" id="txCsv">CSV</button>
@@ -298,8 +299,7 @@ const STATUS = {
   5: { t: "Aguardando pagamento", c: "pend" },
   1: { t: "Pagamento aprovado",   c: "ok"   },
   3: { t: "Rejeitado",            c: "bad"  },
-  6: { t: "Cancelado / expirado", c: "bad"  },
-  9: { t: "Estornado",            c: "bad"  }
+  6: { t: "Cancelado / expirado", c: "bad"  }
 };
 
 let mode = "pix", poller = null;
@@ -592,7 +592,11 @@ async function gerarLink() {
 }
 
 // ---- Painel de transações ----
-const ST = { 5: ["Pendente", "pend"], 1: ["Aprovado", "ok"], 3: ["Rejeitado", "bad"], 6: ["Cancelado", "bad"], 9: ["Estornado", "bad"] };
+const ST = { 5: ["Pendente", "pend"], 1: ["Aprovado", "ok"], 3: ["Rejeitado", "bad"], 6: ["Cancelado", "bad"] };
+// @problema: trecho de código escrito por modelo de linguagem
+// Pendente há mais de 3 horas = "Não concluída" (a PlugPay não efetiva depois disso). Calculado pela data; se o pagamento chegar, vira Aprovado.
+const NAO_CONCLUIDA = ["Não concluída", "nc"];
+const situacao = (t) => (t.status === 5 && Date.now() - new Date(t.criado_em).getTime() > 3 * 3600e3) ? NAO_CONCLUIDA : (ST[t.status] || ["—", "pend"]);
 const brl = (n) => "R$ " + Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
 
 const fmtCPF = (c) => String(c).replace(/\D/g, "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
@@ -685,18 +689,20 @@ async function carregarUsuarios() {
   } catch (_) { /* o filtro simplesmente fica só com "Todos" */ }
 }
 
+let seqTx = 0; // só a última consulta pode desenhar a tabela (respostas antigas chegam fora de ordem)
 async function carregarTransacoes() {
-  const body = $("txBody"), info = $("txInfo");
+  const body = $("txBody"), info = $("txInfo"), minha = ++seqTx;
   info.textContent = "Carregando...";
   try {
     const d = await api({ action: "transacoes", ...filtrosTransacoes(), limite: 100 });
+    if (minha !== seqTx) return;
     const lista = d.transacoes || [];
     body.innerHTML = "";
     lista.forEach(t => {
       const tr = document.createElement("tr");
       const cel = (txt) => { const td = document.createElement("td"); td.textContent = txt ?? ""; tr.appendChild(td); return td; };
       cel(new Date(t.criado_em).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })).className = "data-hora";
-      celulaEditavel(cel(""), t, { campo: "referencia_externa", chave: "numeroPedido", copiar: true, max: 20, numerico: true, placeholder: "Nº do pedido" });
+      celulaEditavel(cel(""), t, { campo: "referencia_externa", chave: "numeroPedido", copiar: true, max: 30, placeholder: "Nº do pedido ou texto" });
       celulaEditavel(cel(""), t, { campo: "nota_fiscal", chave: "notaFiscal", copiar: true, max: 60, placeholder: "Nº da nota ou texto" });
       const tdNome = cel("");
       celulaEditavel(tdNome, t, { campo: "nome_cliente", chave: "nomeCliente", copiar: true, max: 100, min: 3, obrigatorio: true, obrigatorioMsg: "Informe o nome completo (mín. 3 letras).", placeholder: "Nome completo" });
@@ -706,7 +712,7 @@ async function carregarTransacoes() {
       const tdU = cel(nomeCurto(t.criado_por)); tdU.title = t.criado_por || "";
       if (t.descricao) { const d = document.createElement("div"); d.className = "sub"; d.textContent = t.descricao; tdU.appendChild(d); }
       cel(t.valor_brl ? brl(t.valor_brl) : "—").className = "valor";
-      const tdSt = cel(""); const st = ST[t.status] || ["—", "pend"];
+      const tdSt = cel(""); const st = situacao(t);
       const b = document.createElement("span"); b.className = "badge " + st[1]; b.style.margin = "0"; b.textContent = st[0]; tdSt.appendChild(b);
       celulaEditavel(cel(""), t, { campo: "data_pago_plug", chave: "dataPagoPlug", tipo: "date", classe: "plug", placeholder: "Data" });
       const tdA = cel(""); const caixa = document.createElement("div"); caixa.className = "acoes"; tdA.appendChild(caixa);
@@ -733,7 +739,7 @@ const CAB = ["Data", "Nº pedido", "Nota fiscal", "Cliente", "CPF", "Observaçõ
 const linhaExport = (t) => [
   dt(t.criado_em), t.referencia_externa || "", t.nota_fiscal || "", t.nome_cliente || "", t.cpf_cliente ? fmtCPF(t.cpf_cliente) : "",
   t.observacoes || "", t.descricao || "", t.criado_por || "", t.metodo === "QR_PARAGUAY" ? "QR Paraguay" : "Pix", t.moeda || "", nBRL(t.valor), nBRL(t.valor_brl),
-  (ST[t.status] || ["—"])[0], String(t.id_transacao || ""), t.referencia || "", dt(t.pago_em), t.data_pago_plug ? fmtData(t.data_pago_plug) : "", t.nome_informado || ""
+  situacao(t)[0], String(t.id_transacao || ""), t.referencia || "", dt(t.pago_em), t.data_pago_plug ? fmtData(t.data_pago_plug) : "", t.nome_informado || ""
 ];
 const hoje = () => new Date().toISOString().slice(0, 10);
 function baixar(blob, nome) {
@@ -810,8 +816,18 @@ async function abrirQR(t) {
 
 $("txRefresh").onclick = carregarTransacoes;
 $("txStatus").onchange = carregarTransacoes;
-$("txDe").onchange = $("txAte").onchange = carregarTransacoes;
+// Datas: espera terminar de digitar (o navegador avisa a cada ano parcial, ex.: 0002, 0020, 0202) e só consulta ano 20xx completo
+let atrasoData = null;
+const mudouData = () => {
+  clearTimeout(atrasoData);
+  atrasoData = setTimeout(() => {
+    const ok = (v) => v === "" || /^20\d{2}-\d{2}-\d{2}$/.test(v);
+    if (ok($("txDe").value) && ok($("txAte").value)) carregarTransacoes();
+  }, 500);
+};
+$("txDe").onchange = $("txAte").onchange = mudouData;
 $("txLimparDatas").onclick = () => { $("txDe").value = ""; $("txAte").value = ""; carregarTransacoes(); };
+$("txLimparBusca").onclick = () => { $("txBusca").value = ""; $("txBusca").focus(); carregarTransacoes(); };
 $("txUsuario").onchange = carregarTransacoes;
 $("txNF").onchange = carregarTransacoes;
 $("txPlug").onchange = carregarTransacoes;

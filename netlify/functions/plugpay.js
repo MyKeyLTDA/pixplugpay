@@ -613,8 +613,8 @@ async function tratar(event) {
       if (!db.enabled()) return json(503, { error: "Supabase não configurado" });
       const campos = {};
       if (req.numeroPedido !== undefined) {
-        const n = String(req.numeroPedido).trim();
-        if (n && !/^\d{1,20}$/.test(n)) return json(400, { error: "O número do pedido deve conter só números." });
+        // Aceita números ou texto livre (ex.: "Teste", "111418-A"); só tira caracteres de controle e limita o tamanho
+        const n = String(req.numeroPedido).replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 30);
         campos.referencia_externa = n || null;
       }
       if (req.notaFiscal !== undefined) {

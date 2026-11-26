@@ -56,11 +56,36 @@ const atualizarStatus = (ref, status, descricao) =>
 const COLUNAS = "id,criado_em,atualizado_em,metodo,referencia,serial_number,id_transacao,status,status_descricao," +
   "moeda,valor,valor_brl,referencia_externa,nota_fiscal,observacoes,descricao,cpf_cliente,nome_cliente,criado_por,editado_por,editado_em," +
   "e2e,pago_em,data_pago_plug,nome_informado,qr_copia_cola";
-function listarTransacoes({ status, busca, usuario, nf, plug, de, ate, limite = 50 } = {}) {
+// Pix pendente há mais de 3 horas passa a ser "Não concluída" (não existe no banco: é calculado pela data)
+const HORAS_NAO_CONCLUIDA = 3;
+
+// @problema: trecho de código escrito por modelo de linguagem
+// Busca sem diferenciar acentos, maiúsculas nem pontuação (CPF com ou sem pontos, "fabio" acha "Fábio" etc.)
+const semAcento = (v) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const soAlfanum = (v) => semAcento(v).replace(/[^a-z0-9]/g, "");
+function casaBusca(t, termo) {
+  const campos = [t.referencia_externa, t.referencia, t.serial_number, t.cpf_cliente, t.nome_cliente, t.nota_fiscal, t.observacoes, t.descricao]
+    .filter((x) => x !== null && x !== undefined && x !== "");
+  const h1 = campos.map(semAcento).join(" ");
+  const h2 = soAlfanum(campos.join(" "));
+  const palavras = semAcento(termo).split(/\s+/).filter(Boolean);
+  return palavras.every((w) => {
+    const wa = w.replace(/[^a-z0-9]/g, "");
+    return h1.includes(w) || (wa !== "" && (h2.includes(wa) || h1.replace(/[^a-z0-9 ]/g, "").includes(wa)));
+  });
+}
+
+async function listarTransacoes({ status, busca, usuario, nf, plug, de, ate, limite = 50 } = {}) {
+  const teto = Math.min(Number(limite) || 50, 1000);
+  const termo = String(busca || "").slice(0, 60).trim();
+  // Com busca, traz até 1000 linhas dos outros filtros e filtra aqui (o banco não ignora acentos)
   let q = "plugpay_transacoes?select=" + COLUNAS + "&ambiente=eq." + encodeURIComponent(ambiente()) +
-    "&order=criado_em.desc&limit=" + Math.min(Number(limite) || 50, 1000);
-  if (status !== undefined && status !== "" && status !== null && Number.isFinite(Number(status))) {
+    "&order=criado_em.desc&limit=" + (termo ? 1000 : teto);
+  const corte = encodeURIComponent(new Date(Date.now() - HORAS_NAO_CONCLUIDA * 3600e3).toISOString());
+  if (status === "nao_concluida") q += "&status=eq.5&criado_em=lt." + corte;
+  else if (status !== undefined && status !== "" && status !== null && Number.isFinite(Number(status))) {
     q += "&status=eq." + Number(status);
+    if (Number(status) === 5) q += "&criado_em=gte." + corte; // "Pendentes" = até 3 h
   }
   const u = String(usuario || "").trim();
   if (u && /^[\w.+@-]{1,100}$/.test(u)) q += "&criado_por=eq." + encodeURIComponent(u);
@@ -69,18 +94,14 @@ function listarTransacoes({ status, busca, usuario, nf, plug, de, ate, limite = 
   if (plug === "sem_data") q += "&data_pago_plug=is.null";     // a PlugPay ainda não repassou (ou ainda não conferido)
   else if (plug === "com_data") q += "&data_pago_plug=not.is.null";
   // Período (datas no horário de Brasília): de = início do dia, ate = fim do dia (exclusivo no dia seguinte)
-  const dia = /^\d{4}-\d{2}-\d{2}$/;
+  const dia = /^20\d{2}-\d{2}-\d{2}$/; // ignora datas pela metade (ex.: ano 0002 enquanto digita)
   if (dia.test(String(de || ""))) q += "&criado_em=gte." + encodeURIComponent(de + "T00:00:00-03:00");
   if (dia.test(String(ate || ""))) {
     const d = new Date(ate + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1);
     q += "&criado_em=lt." + encodeURIComponent(d.toISOString().slice(0, 10) + "T00:00:00-03:00");
   }
-  const t = String(busca || "").replace(/[^\p{L}\p{N} ._\-]/gu, "").trim().slice(0, 60);
-  if (t) {
-    const like = encodeURIComponent("*" + t + "*");
-    q += "&or=(referencia_externa.ilike." + like + ",referencia.ilike." + like + ",serial_number.ilike." + like + ",cpf_cliente.ilike." + like + ",nome_cliente.ilike." + like + ",nota_fiscal.ilike." + like + ",observacoes.ilike." + like + ")";
-  }
-  return req(q, { method: "GET" });
+  const linhas = await req(q, { method: "GET" });
+  return termo ? linhas.filter((t) => casaBusca(t, termo)).slice(0, teto) : linhas;
 }
 
 // Uma transação com o QR (para reabrir a cobrança)
@@ -187,4 +208,4 @@ const listarTentativasVencidas = (agoraIso, limite = 5) =>
   req("plugpay_tentativas?select=id&or=(and(estado.eq.aguardando,proxima_em.lt." + agoraIso + "),and(estado.eq.gerando,gerando_ate.lt." + agoraIso + "))" +
     amb() + "&order=proxima_em.asc.nullsfirst&limit=" + Number(limite), { method: "GET" });
 
-module.exports = { falhasDeLinks, criarTentativa, lerTentativa, ultimaTentativaDoLink, atualizarTentativaSe, listarTentativasVencidas, listarParaPadronizar, tokenLer, tokenGarantirLinha, tokenTrava, tokenSalvar, tokenBloquear, tokenSoltar, enabled, registrar, logWebhook, inserirLogs, listarLogs, atualizarStatus, listarTransacoes, buscarTransacao, atualizarSe, criarLink, buscarLink, atualizarLinkSe, listarLinks, buscarPorIdTransacao, listarUsuarios, ambiente };
+module.exports = { casaBusca, HORAS_NAO_CONCLUIDA, falhasDeLinks, criarTentativa, lerTentativa, ultimaTentativaDoLink, atualizarTentativaSe, listarTentativasVencidas, listarParaPadronizar, tokenLer, tokenGarantirLinha, tokenTrava, tokenSalvar, tokenBloquear, tokenSoltar, enabled, registrar, logWebhook, inserirLogs, listarLogs, atualizarStatus, listarTransacoes, buscarTransacao, atualizarSe, criarLink, buscarLink, atualizarLinkSe, listarLinks, buscarPorIdTransacao, listarUsuarios, ambiente };
