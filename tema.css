@@ -1,6 +1,6 @@
 /* Tema escuro. Escolha em localStorage 'pp_tema': sistema (padrão) | claro | escuro */
 html[data-tema="escuro"] {
-  --navy:#2a4a85; --navy2:#9db8e8; --bg:#0e141f; --ok:#4cc26a; --err:#ff7b72; color-scheme:dark;
+  --navy:#2a4a85; --navy2:#9db8e8; --bg:#0e141f; --ok:#4cc26a; --err:#ff7b72; color-scheme:dark; --pl-fundo:#141d2c; --pl-texto:#dfe7f3; --pl-grade:#2c3a52; --pl-borda:#3b4b68; --pl-cab:#1f2c42; --pl-cabtxt:#c3d0e6; --pl-zebra:#18233a; --pl-hover:#223454; --pl-sel:#27406b; --pl-selborda:#6fa0e6; --pl-nl:#8fa0bd; --pl-filtro:#0f1726;
 }
 html[data-tema="escuro"] body { background:var(--bg); color:#e3e9f3; }
 html[data-tema="escuro"] .card, html[data-tema="escuro"] dialog { background:#182233; box-shadow:0 1px 6px rgba(0,0,0,.5); color:#e3e9f3; }
@@ -34,7 +34,7 @@ html[data-tema="escuro"] .seletor-tema { background:#0f1726; color:#e3e9f3; bord
 
 @media (prefers-color-scheme: dark) {
 html:not([data-tema="claro"]):not([data-tema="escuro"]) {
-  --navy:#2a4a85; --navy2:#9db8e8; --bg:#0e141f; --ok:#4cc26a; --err:#ff7b72; color-scheme:dark;
+  --navy:#2a4a85; --navy2:#9db8e8; --bg:#0e141f; --ok:#4cc26a; --err:#ff7b72; color-scheme:dark; --pl-fundo:#141d2c; --pl-texto:#dfe7f3; --pl-grade:#2c3a52; --pl-borda:#3b4b68; --pl-cab:#1f2c42; --pl-cabtxt:#c3d0e6; --pl-zebra:#18233a; --pl-hover:#223454; --pl-sel:#27406b; --pl-selborda:#6fa0e6; --pl-nl:#8fa0bd; --pl-filtro:#0f1726;
 }
 html:not([data-tema="claro"]):not([data-tema="escuro"]) body { background:var(--bg); color:#e3e9f3; }
 html:not([data-tema="claro"]):not([data-tema="escuro"]) .card, html:not([data-tema="claro"]):not([data-tema="escuro"]) dialog { background:#182233; box-shadow:0 1px 6px rgba(0,0,0,.5); color:#e3e9f3; }

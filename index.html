@@ -120,18 +120,23 @@
   .periodo { display:flex; gap:6px; align-items:center; font-size:12px; color:#6b7686; }
   .periodo input { width:auto; padding:7px 8px; }
 
-  /* Tabela de transações no estilo planilha (Excel): grade em todas as células, cabeçalho cinza fixo, nº da linha */
-  #txBox .planilha { max-height:72vh; overflow:auto; border:1px solid #b8bec8; background:#fff; margin-top:12px; }
-  #txTabela { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; margin:0; }
-  #txTabela th, #txTabela td { border-right:1px solid #d3d8df; border-bottom:1px solid #d3d8df; padding:5px 8px; vertical-align:middle; text-align:left; }
-  #txTabela th { background:#e8ebef; color:#2b3340; font-size:12px; font-weight:700; text-transform:none; letter-spacing:0; position:sticky; top:0; z-index:2; border-bottom:2px solid #aab1bc; white-space:nowrap; }
-  #txTabela th.nl, #txTabela td.nl { background:#e8ebef; color:#6b7482; text-align:center; width:38px; min-width:38px; font-size:11.5px; position:sticky; left:0; z-index:1; border-right:2px solid #aab1bc; }
+  /* Tabela de transações no estilo planilha (Excel): grade em todas as células, cabeçalho fixo, nº da linha, filtros por coluna */
+  :root { --pl-fundo:#fff; --pl-texto:#1d2430; --pl-grade:#d3d8df; --pl-borda:#b8bec8; --pl-cab:#e8ebef; --pl-cabtxt:#2b3340; --pl-zebra:#f7f9fb; --pl-hover:#e6f0fb; --pl-sel:#d6e8fb; --pl-selborda:#2f6fb5; --pl-nl:#6b7482; --pl-filtro:#fff; }
+  #txBox .planilha { max-height:72vh; overflow:auto; border:1px solid var(--pl-borda); background:var(--pl-fundo); margin-top:12px; }
+  #txTabela { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; margin:0; color:var(--pl-texto); }
+  #txTabela th, #txTabela td { border-right:1px solid var(--pl-grade); border-bottom:1px solid var(--pl-grade); padding:5px 8px; vertical-align:middle; text-align:left; }
+  #txTabela th { background:var(--pl-cab); color:var(--pl-cabtxt); font-size:12px; font-weight:700; text-transform:none; letter-spacing:0; position:sticky; top:0; z-index:2; white-space:nowrap; cursor:pointer; user-select:none; }
+  #txTabela thead tr.filtros th { top:var(--pl-alt-cab, 31px); cursor:default; padding:3px 4px; border-bottom:2px solid var(--pl-borda); font-weight:400; }
+  #txTabela thead tr.filtros input { width:100%; min-width:70px; box-sizing:border-box; padding:3px 6px; font-size:12px; border:1px solid var(--pl-grade); border-radius:3px; background:var(--pl-filtro); color:var(--pl-texto); margin:0; }
+  #txTabela th .seta { font-size:10px; color:var(--pl-nl); margin-left:4px; }
+  #txTabela th.nl, #txTabela td.nl { background:var(--pl-cab); color:var(--pl-nl); text-align:center; width:38px; min-width:38px; font-size:11.5px; position:sticky; left:0; z-index:1; border-right:2px solid var(--pl-borda); cursor:default; }
   #txTabela th.nl { z-index:3; }
-  #txTabela tbody tr:nth-child(even) td:not(.nl) { background:#f7f9fb; }
-  #txTabela tbody tr:hover td:not(.nl) { background:#e6f0fb; }
-  #txTabela tbody tr.sel td:not(.nl) { background:#d6e8fb; outline:1px solid #2f6fb5; outline-offset:-1px; }
+  #txTabela td { background:var(--pl-fundo); color:var(--pl-texto); white-space:nowrap; }
+  #txTabela td .sub { color:var(--pl-nl); }
+  #txTabela tbody tr:nth-child(even) td:not(.nl) { background:var(--pl-zebra); }
+  #txTabela tbody tr:hover td:not(.nl) { background:var(--pl-hover); }
+  #txTabela tbody tr.sel td:not(.nl) { background:var(--pl-sel); outline:1px solid var(--pl-selborda); outline-offset:-1px; }
   #txTabela td.valor, #txTabela th.valor { text-align:right; font-variant-numeric:tabular-nums; }
-  #txTabela td { white-space:nowrap; }
   #txTabela td.obs, #txTabela td.cp.obs { white-space:normal; min-width:140px; }
   #txTabela .badge { margin:0; padding:2px 10px; font-size:12px; }
 </style>
@@ -270,7 +275,7 @@
       <div class="sub" id="txInfo" style="margin-top:8px"></div>
       <div class="planilha">
       <table id="txTabela">
-        <thead><tr><th class="nl"></th><th>Data</th><th>Nº pedido</th><th>Nota fiscal</th><th>Cliente</th><th>CPF</th><th>Observações</th><th>Emitido por</th><th class="valor">Valor</th><th>Status</th><th>Pago pela Plug</th><th></th></tr></thead>
+        <thead><tr><th class="nl"></th><th data-col="data">Data<span class="seta"></span></th><th data-col="pedido">Nº pedido<span class="seta"></span></th><th data-col="nota">Nota fiscal<span class="seta"></span></th><th data-col="cliente">Cliente<span class="seta"></span></th><th data-col="cpf">CPF<span class="seta"></span></th><th data-col="obs">Observações<span class="seta"></span></th><th data-col="usuario">Emitido por<span class="seta"></span></th><th data-col="valor" class="valor">Valor<span class="seta"></span></th><th data-col="status">Status<span class="seta"></span></th><th data-col="plug">Pago pela Plug<span class="seta"></span></th><th></th></tr><tr class="filtros"><th class="nl"></th><th><input data-filtro="data" placeholder="filtrar" aria-label="Filtrar Data"></th><th><input data-filtro="pedido" placeholder="filtrar" aria-label="Filtrar Nº pedido"></th><th><input data-filtro="nota" placeholder="filtrar" aria-label="Filtrar Nota fiscal"></th><th><input data-filtro="cliente" placeholder="filtrar" aria-label="Filtrar Cliente"></th><th><input data-filtro="cpf" placeholder="filtrar" aria-label="Filtrar CPF"></th><th><input data-filtro="obs" placeholder="filtrar" aria-label="Filtrar Observações"></th><th><input data-filtro="usuario" placeholder="filtrar" aria-label="Filtrar Emitido por"></th><th><input data-filtro="valor" placeholder="filtrar" aria-label="Filtrar Valor"></th><th><input data-filtro="status" placeholder="filtrar" aria-label="Filtrar Status"></th><th><input data-filtro="plug" placeholder="filtrar" aria-label="Filtrar Pago pela Plug"></th><th><button type="button" class="link" id="txLimparFiltrosCol" style="margin:0">limpar filtros</button></th></tr></thead>
         <tbody id="txBody"></tbody>
       </table>
       </div>
@@ -705,44 +710,92 @@ async function carregarUsuarios() {
 }
 
 let seqTx = 0; // só a última consulta pode desenhar a tabela (respostas antigas chegam fora de ordem)
+let listaTx = [];
+let ordTx = { col: null, dir: 1 };
+const filtroCol = {};
+// @problema: trecho de código escrito por modelo de linguagem
+// Filtro e ordenação por coluna (como no Excel), feitos sobre as linhas já carregadas; ignoram acento e pontuação
+const normTx = (v) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const fmtDH = (v) => new Date(v).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+const COLS_TX = {
+  data:    { txt: (t) => fmtDH(t.criado_em),                         ord: (t) => t.criado_em },
+  pedido:  { txt: (t) => t.referencia_externa || "",                ord: (t) => normTx(t.referencia_externa) },
+  nota:    { txt: (t) => t.nota_fiscal || "",                       ord: (t) => normTx(t.nota_fiscal) },
+  cliente: { txt: (t) => t.nome_cliente || "",                      ord: (t) => normTx(t.nome_cliente) },
+  cpf:     { txt: (t) => (t.cpf_cliente ? fmtCPF(t.cpf_cliente) + " " + t.cpf_cliente : ""), ord: (t) => t.cpf_cliente || "" },
+  obs:     { txt: (t) => t.observacoes || "",                       ord: (t) => normTx(t.observacoes) },
+  usuario: { txt: (t) => nomeCurto(t.criado_por) + " " + (t.descricao || ""), ord: (t) => normTx(t.criado_por) },
+  valor:   { txt: (t) => (t.valor_brl ? brl(t.valor_brl) + " " + String(t.valor_brl) : ""), ord: (t) => Number(t.valor_brl || 0) },
+  status:  { txt: (t) => situacao(t)[0],                            ord: (t) => situacao(t)[0] },
+  plug:    { txt: (t) => (t.data_pago_plug ? fmtData(t.data_pago_plug) : ""), ord: (t) => t.data_pago_plug || "" },
+};
+function passaFiltroCol(t) {
+  for (const [k, termo] of Object.entries(filtroCol)) {
+    if (!termo) continue;
+    const h = normTx(COLS_TX[k].txt(t));
+    const hs = h.replace(/[^a-z0-9]/g, "");
+    const ok = normTx(termo).split(/\s+/).filter(Boolean).every((w) => h.includes(w) || (w.replace(/[^a-z0-9]/g, "") !== "" && hs.includes(w.replace(/[^a-z0-9]/g, ""))));
+    if (!ok) return false;
+  }
+  return true;
+}
+function desenharTransacoes() {
+  const body = $("txBody"), info = $("txInfo");
+  let lista = listaTx.filter(passaFiltroCol);
+  if (ordTx.col) {
+    const f = COLS_TX[ordTx.col].ord;
+    lista = [...lista].sort((x, y) => { const a = f(x), b = f(y); return (a < b ? -1 : a > b ? 1 : 0) * ordTx.dir; });
+  }
+  $("txTabela").style.setProperty("--pl-alt-cab", $("txTabela").tHead.rows[0].offsetHeight + "px"); // a linha de filtros gruda logo abaixo do cabeçalho
+  document.querySelectorAll("#txTabela th[data-col] .seta").forEach((e) => { e.textContent = e.parentNode.dataset.col === ordTx.col ? (ordTx.dir === 1 ? "▲" : "▼") : ""; });
+  body.innerHTML = "";
+  lista.forEach((t, idx) => {
+    const tr = document.createElement("tr");
+    const cel = (txt) => { const td = document.createElement("td"); td.textContent = txt ?? ""; tr.appendChild(td); return td; };
+    cel(String(idx + 1)).className = "nl";
+    tr.addEventListener("click", () => { body.querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel")); tr.classList.add("sel"); });
+    cel(fmtDH(t.criado_em)).className = "data-hora";
+    celulaEditavel(cel(""), t, { campo: "referencia_externa", chave: "numeroPedido", copiar: true, max: 30, placeholder: "Nº do pedido ou texto" });
+    celulaEditavel(cel(""), t, { campo: "nota_fiscal", chave: "notaFiscal", copiar: true, max: 60, placeholder: "Nº da nota ou texto" });
+    const tdNome = cel("");
+    celulaEditavel(tdNome, t, { campo: "nome_cliente", chave: "nomeCliente", copiar: true, max: 100, min: 3, obrigatorio: true, obrigatorioMsg: "Informe o nome completo (mín. 3 letras).", placeholder: "Nome completo" });
+    if (t.nome_informado) tdNome.title = "Informado pelo cliente: " + t.nome_informado;
+    copiavel(cel(""), t.cpf_cliente, fmtCPF);
+    celulaEditavel(cel(""), t, { campo: "observacoes", chave: "observacoes", max: 200, placeholder: "Observação curta", classe: "obs" });
+    const tdU = cel(nomeCurto(t.criado_por)); tdU.title = t.criado_por || "";
+    if (t.descricao) { const d = document.createElement("div"); d.className = "sub"; d.textContent = t.descricao; tdU.appendChild(d); }
+    cel(t.valor_brl ? brl(t.valor_brl) : "—").className = "valor";
+    const tdSt = cel(""); const st = situacao(t);
+    const b = document.createElement("span"); b.className = "badge " + st[1]; b.style.margin = "0"; b.textContent = st[0]; tdSt.appendChild(b);
+    celulaEditavel(cel(""), t, { campo: "data_pago_plug", chave: "dataPagoPlug", tipo: "date", classe: "plug", placeholder: "Data" });
+    const tdA = cel(""); const caixa = document.createElement("div"); caixa.className = "acoes"; tdA.appendChild(caixa);
+    const btn = (txt, fn) => { const x = document.createElement("button"); x.type = "button"; x.className = "link"; x.textContent = txt; x.onclick = fn; caixa.appendChild(x); };
+    btn("Abrir QR", () => abrirQR(t));
+    if (t.status === 5) btn("Verificar", () => verificar(t).then(carregarTransacoes));
+    body.appendChild(tr);
+  });
+  const aprov = lista.filter(t => t.status === 1);
+  const soma = aprov.reduce((a, t) => a + Number(t.valor_brl || 0), 0);
+  const filtrado = lista.length !== listaTx.length ? " (de " + listaTx.length + ")" : "";
+  info.textContent = lista.length + " transações exibidas" + filtrado + " · " + aprov.length + " aprovadas somando " + brl(soma);
+}
 async function carregarTransacoes() {
-  const body = $("txBody"), info = $("txInfo"), minha = ++seqTx;
+  const info = $("txInfo"), minha = ++seqTx;
   info.textContent = "Carregando...";
   try {
-    const d = await api({ action: "transacoes", ...filtrosTransacoes(), limite: 100 });
+    const d = await api({ action: "transacoes", ...filtrosTransacoes(), limite: 500 });
     if (minha !== seqTx) return;
-    const lista = d.transacoes || [];
-    body.innerHTML = "";
-    lista.forEach((t, idx) => {
-      const tr = document.createElement("tr");
-      const cel = (txt) => { const td = document.createElement("td"); td.textContent = txt ?? ""; tr.appendChild(td); return td; };
-      cel(String(idx + 1)).className = "nl";
-      tr.addEventListener("click", () => { body.querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel")); tr.classList.add("sel"); });
-      cel(new Date(t.criado_em).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })).className = "data-hora";
-      celulaEditavel(cel(""), t, { campo: "referencia_externa", chave: "numeroPedido", copiar: true, max: 30, placeholder: "Nº do pedido ou texto" });
-      celulaEditavel(cel(""), t, { campo: "nota_fiscal", chave: "notaFiscal", copiar: true, max: 60, placeholder: "Nº da nota ou texto" });
-      const tdNome = cel("");
-      celulaEditavel(tdNome, t, { campo: "nome_cliente", chave: "nomeCliente", copiar: true, max: 100, min: 3, obrigatorio: true, obrigatorioMsg: "Informe o nome completo (mín. 3 letras).", placeholder: "Nome completo" });
-      if (t.nome_informado) tdNome.title = "Informado pelo cliente: " + t.nome_informado;
-      copiavel(cel(""), t.cpf_cliente, fmtCPF);
-      celulaEditavel(cel(""), t, { campo: "observacoes", chave: "observacoes", max: 200, placeholder: "Observação curta", classe: "obs" });
-      const tdU = cel(nomeCurto(t.criado_por)); tdU.title = t.criado_por || "";
-      if (t.descricao) { const d = document.createElement("div"); d.className = "sub"; d.textContent = t.descricao; tdU.appendChild(d); }
-      cel(t.valor_brl ? brl(t.valor_brl) : "—").className = "valor";
-      const tdSt = cel(""); const st = situacao(t);
-      const b = document.createElement("span"); b.className = "badge " + st[1]; b.style.margin = "0"; b.textContent = st[0]; tdSt.appendChild(b);
-      celulaEditavel(cel(""), t, { campo: "data_pago_plug", chave: "dataPagoPlug", tipo: "date", classe: "plug", placeholder: "Data" });
-      const tdA = cel(""); const caixa = document.createElement("div"); caixa.className = "acoes"; tdA.appendChild(caixa);
-      const btn = (txt, fn) => { const x = document.createElement("button"); x.type = "button"; x.className = "link"; x.textContent = txt; x.onclick = fn; caixa.appendChild(x); };
-      btn("Abrir QR", () => abrirQR(t));
-      if (t.status === 5) btn("Verificar", () => verificar(t).then(carregarTransacoes));
-      body.appendChild(tr);
-    });
-    const aprov = lista.filter(t => t.status === 1);
-    const soma = aprov.reduce((a, t) => a + Number(t.valor_brl || 0), 0);
-    info.textContent = lista.length + " transações exibidas · " + aprov.length + " aprovadas somando " + brl(soma);
+    listaTx = d.transacoes || [];
+    desenharTransacoes();
   } catch (e) { info.textContent = e.message; }
 }
+document.querySelectorAll("#txTabela th[data-col]").forEach((th) => th.addEventListener("click", () => {
+  const c = th.dataset.col;
+  ordTx = ordTx.col === c ? (ordTx.dir === 1 ? { col: c, dir: -1 } : { col: null, dir: 1 }) : { col: c, dir: 1 };
+  desenharTransacoes();
+}));
+document.querySelectorAll("#txTabela input[data-filtro]").forEach((i) => i.addEventListener("input", () => { filtroCol[i.dataset.filtro] = i.value.trim(); desenharTransacoes(); }));
+$("txLimparFiltrosCol").onclick = () => { document.querySelectorAll("#txTabela input[data-filtro]").forEach((i) => { i.value = ""; }); for (const k in filtroCol) delete filtroCol[k]; ordTx = { col: null, dir: 1 }; desenharTransacoes(); };
 
 // ---- Exportação (mesmos filtros da tela, até 1000 linhas) ----
 const csvCel = (v) => {
